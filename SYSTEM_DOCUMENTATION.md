@@ -90,6 +90,7 @@ CREATE TABLE user_files (
 #### POST `/api/auth/register/`
 **Purpose**: Register a new user account
 **Authentication**: Not required
+**Status**: ✅ Implemented and working
 **Request Body**:
 ```json
 {
@@ -119,6 +120,7 @@ CREATE TABLE user_files (
 #### POST `/api/auth/login/`
 **Purpose**: Authenticate user and get JWT tokens
 **Authentication**: Not required
+**Status**: ✅ Implemented and working
 **Request Body**:
 ```json
 {
@@ -132,7 +134,9 @@ CREATE TABLE user_files (
     "user": {
         "id": 1,
         "username": "testuser",
-        "email": "test@example.com"
+        "email": "test@example.com",
+        "first_name": "Test",
+        "last_name": "User"
     },
     "access": "jwt_access_token",
     "refresh": "jwt_refresh_token"
@@ -142,6 +146,7 @@ CREATE TABLE user_files (
 #### POST `/api/auth/logout/`
 **Purpose**: Blacklist refresh token (logout)
 **Authentication**: Required
+**Status**: ✅ Implemented and working
 **Request Body**:
 ```json
 {
@@ -153,10 +158,18 @@ CREATE TABLE user_files (
 #### POST `/api/auth/token/refresh/`
 **Purpose**: Refresh access token using refresh token
 **Authentication**: Not required
+**Status**: ✅ Implemented and working
 **Request Body**:
 ```json
 {
     "refresh": "jwt_refresh_token"
+}
+```
+**Response (200)**:
+```json
+{
+    "access": "new_jwt_access_token",
+    "refresh": "new_jwt_refresh_token"
 }
 ```
 
@@ -278,8 +291,10 @@ CREATE TABLE user_files (
 
 ### Authentication & Authorization
 - JWT-based authentication using `djangorestframework-simplejwt`
+- Requires `rest_framework_simplejwt.token_blacklist` app for logout functionality
 - Access tokens expire in 60 minutes
 - Refresh tokens expire in 7 days with rotation
+- Token blacklisting on logout prevents token reuse
 - All file endpoints require authentication
 - Users can only access their own files
 
@@ -369,8 +384,16 @@ docker compose up --build
 - XSS protection via REST framework serializers
 
 ## Testing
-The system includes comprehensive API tests in `test_api.py` covering:
-- User registration and authentication
+The system includes comprehensive API tests in `core/tests.py` covering:
+
+### Authentication Tests (22 test cases)
+- **Registration**: Success, password validation, duplicate checks, missing fields
+- **Login**: Success, invalid credentials, inactive users, missing fields  
+- **Logout**: Success, invalid tokens, authentication required
+- **Token Refresh**: Success, invalid/blacklisted tokens, token rotation
+- **Integration**: Complete auth flows, token validation
+
+### Additional Test Coverage
 - File upload and deduplication
 - Search and filtering functionality
 - File download and integrity verification
