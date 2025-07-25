@@ -434,4 +434,159 @@ class FileListAPITests(APITestCase):
         self.assertIsInstance(file_data['uploaded_at'], str)
         self.assertIsInstance(file_data['tags'], list)
         self.assertIsInstance(file_data['size'], int)
-        self.assertIsInstance(file_data['file_hash'], str) 
+        self.assertIsInstance(file_data['file_hash'], str)
+
+    def test_file_stats_endpoint(self):
+        """Test file statistics endpoint returns correct data"""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token1}')
+        
+        stats_url = reverse('file_stats')
+        response = self.client.get(stats_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify response structure
+        expected_fields = ['total_files', 'total_size', 'storage_used', 'storage_quota', 'storage_percentage']
+        for field in expected_fields:
+            self.assertIn(field, response.data)
+        
+        # Verify data types
+        self.assertIsInstance(response.data['total_files'], int)
+        self.assertIsInstance(response.data['total_size'], int)
+        self.assertIsInstance(response.data['storage_used'], int)
+        self.assertIsInstance(response.data['storage_quota'], int)
+        self.assertIsInstance(response.data['storage_percentage'], float)
+        
+        # Verify values make sense (we have 3 uploaded files)
+        self.assertEqual(response.data['total_files'], 3)
+        self.assertGreater(response.data['total_size'], 0)
+        self.assertGreaterEqual(response.data['storage_percentage'], 0)
+        self.assertLessEqual(response.data['storage_percentage'], 100)
+        
+        # storage_used should equal total_size for this user
+        self.assertEqual(response.data['storage_used'], response.data['total_size'])
+
+    def test_file_stats_empty_account(self):
+        """Test file stats for user with no files"""
+        # Create new user with no files
+        user3 = User.objects.create_user(
+            username='testuser3',
+            email='test3@example.com',
+            password='testpass123'
+        )
+        refresh3 = RefreshToken.for_user(user3)
+        access_token3 = str(refresh3.access_token)
+        
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token3}')
+        
+        stats_url = reverse('file_stats')
+        response = self.client.get(stats_url)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['total_files'], 0)
+        self.assertEqual(response.data['total_size'], 0)
+        self.assertEqual(response.data['storage_percentage'], 0.0)
+
+    def test_file_stats_excludes_deleted_files(self):
+        """Test that file stats exclude soft-deleted files"""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token1}')
+        
+        # Get initial stats
+        stats_url = reverse('file_stats')
+        initial_response = self.client.get(stats_url)
+        initial_files = initial_response.data['total_files']
+        initial_size = initial_response.data['total_size']
+        
+        # Soft delete a file
+        user_file = UserFile.objects.filter(user=self.user1).first()
+        deleted_size = user_file.file.size
+        user_file.deleted = True
+        user_file.save()
+        
+        # Stats should reflect the deletion
+        response = self.client.get(stats_url)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['total_files'], initial_files - 1)
+        self.assertEqual(response.data['total_size'], initial_size - deleted_size)
+
+    def test_file_stats_unauthenticated(self):
+        """Test file stats endpoint requires authentication"""
+        fresh_client = APIClient()
+        
+        stats_url = reverse('file_stats')
+        response = fresh_client.get(stats_url)
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_file_detail_endpoint(self):
+        """Test file detail endpoint returns correct file information"""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token1}')
+        
+        # Get a file ID from uploaded files
+        file_id = self.uploaded_files[0]['id']
+        
+        # Test file detail endpoint
+        detail_url = reverse('file_detail', kwargs={'file_id': file_id})
+        response = self.client.get(detail_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify response structure matches FileListSerializer
+        expected_fields = ['id', 'original_filename', 'uploaded_at', 'tags', 'size', 'mime_type', 'file_hash']
+        for field in expected_fields:
+            self.assertIn(field, response.data)
+        
+        # Verify specific values match the uploaded file
+        self.assertEqual(response.data['id'], file_id)
+        self.assertEqual(response.data['original_filename'], self.uploaded_files[0]['original_filename'])
+        self.assertEqual(response.data['tags'], self.uploaded_files[0]['tags'])
+        self.assertEqual(response.data['size'], self.uploaded_files[0]['size'])
+        self.assertEqual(response.data['mime_type'], self.uploaded_files[0]['mime_type'])
+        self.assertEqual(response.data['file_hash'], self.uploaded_files[0]['file_hash'])
+
+    def test_file_detail_not_found(self):
+        """Test file detail endpoint returns 404 for non-existent file"""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token1}')
+        
+        detail_url = reverse('file_detail', kwargs={'file_id': 99999})
+        response = self.client.get(detail_url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('error', response.data)
+
+    def test_file_detail_other_user_file(self):
+        """Test that users cannot access other users' files via detail endpoint"""
+        # User2 uploads a file
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token2}')
+        uploaded_file = SimpleUploadedFile("user2_file.txt", b"user2 content", content_type="text/plain")
+        data = {'file': uploaded_file}
+        upload_response = self.client.post(self.upload_url, data, format='multipart')
+        self.assertEqual(upload_response.status_code, status.HTTP_201_CREATED)
+        user2_file_id = upload_response.data['id']
+        
+        # User1 tries to access User2's file
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token1}')
+        detail_url = reverse('file_detail', kwargs={'file_id': user2_file_id})
+        response = self.client.get(detail_url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_file_detail_deleted_file(self):
+        """Test that soft-deleted files are not accessible via detail endpoint"""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token1}')
+        
+        # Get a file and soft delete it
+        user_file = UserFile.objects.filter(user=self.user1).first()
+        file_id = user_file.id
+        user_file.deleted = True
+        user_file.save()
+        
+        # Try to access the deleted file
+        detail_url = reverse('file_detail', kwargs={'file_id': file_id})
+        response = self.client.get(detail_url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_file_detail_unauthenticated(self):
+        """Test file detail endpoint requires authentication"""
+        fresh_client = APIClient()
+        
+        detail_url = reverse('file_detail', kwargs={'file_id': 1})
+        response = fresh_client.get(detail_url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED) 

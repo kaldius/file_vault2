@@ -162,4 +162,68 @@ def file_list(request):
         return paginator.get_paginated_response(serializer.data)
 
     serializer = FileListSerializer(queryset, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def file_detail(request, file_id):
+    """
+    Get detailed information about a specific file
+    """
+    user = request.user
+    
+    try:
+        user_file = UserFile.objects.select_related('file').get(
+            id=file_id,
+            user=user,
+            deleted=False
+        )
+    except UserFile.DoesNotExist:
+        return Response(
+            {'error': 'File not found'}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    serializer = FileListSerializer(user_file)
+    return Response(serializer.data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def file_stats(request):
+    """
+    Get user's file storage statistics
+    """
+    from .serializers import FileStatsSerializer
+    from django.db.models import Sum, Count
+    
+    user = request.user
+    
+    # Get user's active files stats
+    user_files_stats = UserFile.objects.filter(
+        user=user, 
+        deleted=False
+    ).select_related('file').aggregate(
+        total_files=Count('id'),
+        total_size=Sum('file__size')
+    )
+    
+    total_files = user_files_stats['total_files'] or 0
+    total_size = user_files_stats['total_size'] or 0
+    
+    # Calculate storage percentage
+    storage_percentage = 0.0
+    if user.storage_quota > 0:
+        storage_percentage = round((user.storage_used / user.storage_quota) * 100, 2)
+    
+    stats_data = {
+        'total_files': total_files,
+        'total_size': total_size,
+        'storage_used': user.storage_used,
+        'storage_quota': user.storage_quota,
+        'storage_percentage': storage_percentage
+    }
+    
+    serializer = FileStatsSerializer(stats_data)
     return Response(serializer.data) 
