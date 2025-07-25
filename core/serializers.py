@@ -169,7 +169,27 @@ class FileUploadSerializer(serializers.Serializer):
             existing_file = File.objects.filter(hash=hash_hex).first()
             
             if existing_file:
-                # File exists, check if user already has this file with same name
+                # Check if user has a deleted file with this content and name
+                deleted_user_file = UserFile.objects.filter(
+                    user=user,
+                    file=existing_file,
+                    original_filename=uploaded_file.name,
+                    deleted=True
+                ).first()
+                
+                if deleted_user_file:
+                    # Undelete the existing file
+                    deleted_user_file.deleted = False
+                    deleted_user_file.tags = tags  # Update tags
+                    deleted_user_file.save()
+                    
+                    # Update user storage usage (restore the file size)
+                    user.storage_used += existing_file.size
+                    user.save()
+                    
+                    return deleted_user_file
+                
+                # Check if user already has this file with same name (not deleted)
                 existing_user_file = UserFile.objects.filter(
                     user=user,
                     file=existing_file,
@@ -182,13 +202,18 @@ class FileUploadSerializer(serializers.Serializer):
                         'file': 'You already have a file with this name and content'
                     })
                 
-                # Create new user file association
+                # Create new user file association (deduplication)
                 user_file = UserFile.objects.create(
                     user=user,
                     file=existing_file,
                     original_filename=uploaded_file.name,
                     tags=tags
                 )
+                
+                # Update user storage usage for the new association
+                user.storage_used += existing_file.size
+                user.save()
+                
             else:
                 # Create storage path using hash
                 storage_path = f"files/{hash_hex[:2]}/{hash_hex[2:4]}/{hash_hex}"
@@ -211,10 +236,10 @@ class FileUploadSerializer(serializers.Serializer):
                     original_filename=uploaded_file.name,
                     tags=tags
                 )
-            
-            # Update user storage usage
-            user.storage_used += uploaded_file.size
-            user.save()
+                
+                # Update user storage usage for the new file
+                user.storage_used += uploaded_file.size
+                user.save()
 
         return user_file
 

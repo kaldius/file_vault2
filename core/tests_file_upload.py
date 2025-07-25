@@ -319,3 +319,174 @@ class FileUploadAPITests(APITestCase):
         # Verify in database
         file_obj = File.objects.get(hash=expected_hash)
         self.assertEqual(file_obj.hash, expected_hash)
+
+    def test_large_file_rejection(self):
+        """Test rejection of files exceeding size limit"""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        
+        # Create a file larger than the limit (assuming 100MB limit)
+        # Use a smaller size for testing (1MB) and mock the limit
+        large_content = b"x" * (1024 * 1024)  # 1MB content
+        large_file = SimpleUploadedFile("large.txt", large_content, content_type="text/plain")
+        
+        # Mock the environment variable to set a smaller limit for testing
+        import os
+        original_limit = os.environ.get('MAX_FILE_SIZE_MB', '100')
+        os.environ['MAX_FILE_SIZE_MB'] = '0'  # Set to 0MB to force rejection
+        
+        try:
+            data = {'file': large_file}
+            response = self.client.post(self.upload_url, data, format='multipart')
+            
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn('File size cannot exceed', str(response.data))
+        finally:
+            # Restore original limit
+            os.environ['MAX_FILE_SIZE_MB'] = original_limit
+
+    def test_file_soft_delete_and_undelete(self):
+        """Test file soft delete and undelete functionality"""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        
+        # Get user's initial storage usage before upload
+        initial_storage_used = self.user.storage_used
+        
+        # Upload a file
+        upload_data = {
+            'file': SimpleUploadedFile("test_delete.txt", self.test_file_content, content_type="text/plain"),
+            'tags': json.dumps(['delete-test'])
+        }
+        upload_response = self.client.post(self.upload_url, upload_data, format='multipart')
+        self.assertEqual(upload_response.status_code, status.HTTP_201_CREATED)
+        
+        file_id = upload_response.data['id']
+        
+        # Verify file exists and is not deleted
+        user_file = UserFile.objects.get(id=file_id)
+        self.assertFalse(user_file.deleted)
+        
+        file_size = user_file.file.size
+        
+        # Verify storage usage increased after upload
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.storage_used, initial_storage_used + file_size)
+        
+        # Delete the file
+        delete_url = reverse('file_delete', kwargs={'file_id': file_id})
+        delete_response = self.client.delete(delete_url)
+        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+        
+        # Verify file is soft deleted
+        user_file.refresh_from_db()
+        self.assertTrue(user_file.deleted)
+        
+        # Verify storage usage was updated (should be back to initial)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.storage_used, initial_storage_used)
+        
+        # Verify file doesn't appear in file list
+        list_url = reverse('file_list')
+        list_response = self.client.get(list_url)
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        file_ids = [f['id'] for f in list_response.data['results']]
+        self.assertNotIn(file_id, file_ids)
+        
+        # Upload the same file again (should undelete)
+        undelete_data = {
+            'file': SimpleUploadedFile("test_delete.txt", self.test_file_content, content_type="text/plain"),
+            'tags': json.dumps(['undelete-test'])
+        }
+        undelete_response = self.client.post(self.upload_url, undelete_data, format='multipart')
+        self.assertEqual(undelete_response.status_code, status.HTTP_201_CREATED)
+        
+        # Should return the same file ID (undeleted)
+        self.assertEqual(undelete_response.data['id'], file_id)
+        
+        # Verify file is undeleted
+        user_file.refresh_from_db()
+        self.assertFalse(user_file.deleted)
+        self.assertEqual(user_file.tags, ['undelete-test'])  # Tags should be updated
+        
+        # Verify storage usage was restored (back to having the file)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.storage_used, initial_storage_used + file_size)
+        
+        # Verify file appears in file list again
+        list_response = self.client.get(list_url)
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        file_ids = [f['id'] for f in list_response.data['results']]
+        self.assertIn(file_id, file_ids)
+
+    def test_delete_nonexistent_file(self):
+        """Test deleting a non-existent file"""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        
+        delete_url = reverse('file_delete', kwargs={'file_id': 99999})
+        response = self.client.delete(delete_url)
+        
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data['error'], 'File not found')
+
+    def test_delete_already_deleted_file(self):
+        """Test deleting an already deleted file"""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        
+        # Upload and delete a file
+        upload_data = {
+            'file': SimpleUploadedFile("test_double_delete.txt", self.test_file_content, content_type="text/plain"),
+        }
+        upload_response = self.client.post(self.upload_url, upload_data, format='multipart')
+        file_id = upload_response.data['id']
+        
+        # Delete the file
+        delete_url = reverse('file_delete', kwargs={'file_id': file_id})
+        self.client.delete(delete_url)
+        
+        # Try to delete again
+        response = self.client.delete(delete_url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_delete_unauthorized(self):
+        """Test deleting a file without authentication"""
+        delete_url = reverse('file_delete', kwargs={'file_id': 1})
+        response = self.client.delete(delete_url)
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_undelete_with_different_user(self):
+        """Test that undelete only works for the same user"""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        
+        # Upload and delete a file as first user
+        upload_data = {
+            'file': SimpleUploadedFile("user_test.txt", self.test_file_content, content_type="text/plain"),
+        }
+        upload_response = self.client.post(self.upload_url, upload_data, format='multipart')
+        file_id = upload_response.data['id']
+        
+        delete_url = reverse('file_delete', kwargs={'file_id': file_id})
+        self.client.delete(delete_url)
+        
+        # Create second user
+        user2 = User.objects.create_user(
+            username='testuser2',
+            email='test2@example.com', 
+            password='testpass123'
+        )
+        refresh2 = RefreshToken.for_user(user2)
+        access_token2 = str(refresh2.access_token)
+        
+        # Try to upload same file as second user
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token2}')
+        upload_data2 = {
+            'file': SimpleUploadedFile("user_test.txt", self.test_file_content, content_type="text/plain"),
+        }
+        response2 = self.client.post(self.upload_url, upload_data2, format='multipart')
+        
+        # Should create a new UserFile association, not undelete the first user's file
+        self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
+        self.assertNotEqual(response2.data['id'], file_id)
+        
+        # Verify first user's file is still deleted
+        user_file1 = UserFile.objects.get(id=file_id)
+        self.assertTrue(user_file1.deleted)

@@ -226,4 +226,83 @@ def file_stats(request):
     }
     
     serializer = FileStatsSerializer(stats_data)
-    return Response(serializer.data) 
+    return Response(serializer.data)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def file_delete(request, file_id):
+    """
+    Soft delete a user file (removes association, not physical file)
+    """
+    user = request.user
+    
+    try:
+        user_file = UserFile.objects.select_related('file').get(
+            id=file_id,
+            user=user,
+            deleted=False
+        )
+    except UserFile.DoesNotExist:
+        return Response(
+            {'error': 'File not found'}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Perform soft delete
+    user_file.deleted = True
+    user_file.save()
+    
+    # Update user storage usage
+    user.storage_used -= user_file.file.size
+    user.save()
+    
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def file_download(request, file_id):
+    """
+    Download file content
+    """
+    from django.http import FileResponse
+    from django.core.files.storage import default_storage
+    import os
+    
+    user = request.user
+    
+    try:
+        user_file = UserFile.objects.select_related('file').get(
+            id=file_id,
+            user=user,
+            deleted=False
+        )
+    except UserFile.DoesNotExist:
+        return Response(
+            {'error': 'File not found'}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    file_obj = user_file.file
+    
+    # Check if file exists in storage
+    if not default_storage.exists(file_obj.storage_path):
+        return Response(
+            {'error': 'File not found in storage'}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Open file and return as response
+    file_handle = default_storage.open(file_obj.storage_path)
+    
+    response = FileResponse(
+        file_handle,
+        content_type=file_obj.mime_type or 'application/octet-stream'
+    )
+    
+    # Set appropriate headers
+    response['Content-Disposition'] = f'attachment; filename="{user_file.original_filename}"'
+    response['Content-Length'] = file_obj.size
+    
+    return response 

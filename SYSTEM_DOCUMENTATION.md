@@ -254,20 +254,44 @@ CREATE TABLE user_files (
 #### GET `/api/files/{id}/`
 **Purpose**: Get detailed information about a specific file
 **Authentication**: Required
+**Status**: ✅ Implemented and working
 **Response (200)**: Same as upload response format
 
 #### GET `/api/files/{id}/download/`
 **Purpose**: Download file content
 **Authentication**: Required
+**Status**: ✅ Implemented and working
 **Response (200)**: File content with appropriate headers
 - `Content-Type`: File's MIME type
 - `Content-Disposition`: `attachment; filename="original_filename"`
 - `Content-Length`: File size
 
+**Behavior**:
+- Returns the actual file content as a downloadable response
+- Validates that the user owns the file and it's not deleted
+- Returns 404 if file not found, not owned by user, or file missing from storage
+- Sets appropriate headers for file download
+
 #### DELETE `/api/files/{id}/delete/`
 **Purpose**: Soft delete a user file (removes association, not physical file)
 **Authentication**: Required
+**Status**: ✅ Implemented and working
 **Response (204)**: No content
+
+**Behavior**:
+- Sets the `deleted` flag to `True` for the user file association
+- Updates user's storage usage by subtracting the file size
+- Does not delete the physical file (allows for deduplication and undelete)
+- Returns 404 if file not found or already deleted
+- Only the file owner can delete their own files
+
+**Undelete Functionality**:
+When a user uploads the same file (same content hash and filename) again after deletion:
+- The system automatically "undeletes" the existing association
+- Sets `deleted` flag back to `False`
+- Updates the tags with new values if provided
+- Restores the file size to user's storage usage
+- Returns the same `UserFile` ID as before deletion
 
 #### GET `/api/files/stats/`
 **Purpose**: Get user's file storage statistics
