@@ -197,6 +197,7 @@ CREATE TABLE user_files (
 #### POST `/api/files/upload/`
 **Purpose**: Upload a new file with automatic deduplication
 **Authentication**: Required
+**Status**: ✅ Implemented and working
 **Request**: Multipart form data
 - `file`: File upload
 - `tags`: JSON array of strings (optional)
@@ -217,6 +218,7 @@ CREATE TABLE user_files (
 #### GET `/api/files/`
 **Purpose**: List user's files with search and filtering
 **Authentication**: Required
+**Status**: ✅ Implemented and working
 **Query Parameters**:
 - `search`: Search in filename and tags
 - `tags`: Filter by specific tag

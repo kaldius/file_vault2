@@ -228,3 +228,17 @@ class FileUploadSerializer(serializers.Serializer):
             'mime_type': instance.file.mime_type,
             'file_hash': instance.file.hash
         } 
+
+
+class FileListSerializer(serializers.ModelSerializer):
+    """
+    Serializer for listing user files
+    """
+    size = serializers.IntegerField(source='file.size', read_only=True)
+    mime_type = serializers.CharField(source='file.mime_type', read_only=True)
+    file_hash = serializers.CharField(source='file.hash', read_only=True)
+
+    class Meta:
+        model = UserFile
+        fields = ('id', 'original_filename', 'uploaded_at', 'tags', 'size', 'mime_type', 'file_hash')
+        read_only_fields = ('id', 'uploaded_at', 'size', 'mime_type', 'file_hash') 

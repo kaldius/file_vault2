@@ -3,7 +3,11 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenRefreshView
-from .serializers import UserRegistrationSerializer, UserLoginSerializer, LogoutSerializer, FileUploadSerializer
+from rest_framework.pagination import PageNumberPagination
+from django.db.models import Q
+from django.utils.dateparse import parse_datetime
+from .serializers import UserRegistrationSerializer, UserLoginSerializer, LogoutSerializer, FileUploadSerializer, FileListSerializer
+from .models import UserFile
 
 
 @api_view(['POST'])
@@ -58,4 +62,104 @@ def file_upload(request):
     if serializer.is_valid():
         user_file = serializer.save()
         return Response(serializer.to_representation(user_file), status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST) 
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class FileListPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def file_list(request):
+    """
+    List user's files with search and filtering
+    """
+    user = request.user
+    queryset = UserFile.objects.filter(user=user, deleted=False).select_related('file')
+
+    # Search in filename and tags
+    search = request.GET.get('search')
+    if search:
+        queryset = queryset.filter(
+            Q(original_filename__icontains=search) |
+            Q(tags__icontains=search)
+        )
+
+    # Filter by specific tag
+    tag_filter = request.GET.get('tags')
+    if tag_filter:
+        queryset = queryset.filter(tags__icontains=tag_filter)
+
+    # Filter by filename
+    filename_filter = request.GET.get('filename')
+    if filename_filter:
+        queryset = queryset.filter(original_filename__icontains=filename_filter)
+
+    # Filter by MIME type
+    mime_type_filter = request.GET.get('mime_type')
+    if mime_type_filter:
+        queryset = queryset.filter(file__mime_type=mime_type_filter)
+
+    # Filter by file size range
+    size_min = request.GET.get('size_min')
+    if size_min:
+        try:
+            queryset = queryset.filter(file__size__gte=int(size_min))
+        except ValueError:
+            pass
+
+    size_max = request.GET.get('size_max')
+    if size_max:
+        try:
+            queryset = queryset.filter(file__size__lte=int(size_max))
+        except ValueError:
+            pass
+
+    # Filter by upload date range
+    uploaded_after = request.GET.get('uploaded_after')
+    if uploaded_after:
+        try:
+            date_after = parse_datetime(uploaded_after)
+            if date_after:
+                queryset = queryset.filter(uploaded_at__gte=date_after)
+        except ValueError:
+            pass
+
+    uploaded_before = request.GET.get('uploaded_before')
+    if uploaded_before:
+        try:
+            date_before = parse_datetime(uploaded_before)
+            if date_before:
+                queryset = queryset.filter(uploaded_at__lte=date_before)
+        except ValueError:
+            pass
+
+    # Ordering
+    ordering = request.GET.get('ordering', '-uploaded_at')
+    # Map ordering fields to actual model fields
+    ordering_map = {
+        'uploaded_at': 'uploaded_at',
+        '-uploaded_at': '-uploaded_at',
+        'original_filename': 'original_filename',
+        '-original_filename': '-original_filename',
+        'file__size': 'file__size',
+        '-file__size': '-file__size'
+    }
+
+    if ordering in ordering_map:
+        queryset = queryset.order_by(ordering_map[ordering])
+    else:
+        queryset = queryset.order_by('-uploaded_at')
+
+    # Pagination
+    paginator = FileListPagination()
+    page = paginator.paginate_queryset(queryset, request)
+    if page is not None:
+        serializer = FileListSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+    serializer = FileListSerializer(queryset, many=True)
+    return Response(serializer.data) 
