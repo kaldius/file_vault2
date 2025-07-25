@@ -3,7 +3,13 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
-from .models import User
+from django.core.files.storage import default_storage
+from django.db import transaction
+import hashlib
+import json
+import mimetypes
+import os
+from .models import User, File, UserFile
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -106,4 +112,119 @@ class LogoutSerializer(serializers.Serializer):
         try:
             RefreshToken(self.token).blacklist()
         except TokenError:
-            raise serializers.ValidationError('Invalid or expired refresh token.') 
+            raise serializers.ValidationError('Invalid or expired refresh token.')
+
+
+class FileUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    tags = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_file(self, value):
+        # Check file size (configurable via environment variable)
+        max_size_mb = int(os.getenv('MAX_FILE_SIZE_MB', '100'))  # Default 100MB
+        max_size = max_size_mb * 1024 * 1024  # Convert MB to bytes
+        if value.size > max_size:
+            raise serializers.ValidationError(f'File size cannot exceed {max_size_mb}MB')
+        return value
+
+    def validate_tags(self, value):
+        if not value:
+            return []
+        
+        try:
+            tags = json.loads(value)
+            if not isinstance(tags, list):
+                raise serializers.ValidationError('Tags must be a JSON array')
+            
+            # Validate each tag
+            for tag in tags:
+                if not isinstance(tag, str):
+                    raise serializers.ValidationError('Each tag must be a string')
+                if len(tag) > 50:
+                    raise serializers.ValidationError('Each tag must be 50 characters or less')
+            
+            return tags
+        except json.JSONDecodeError:
+            raise serializers.ValidationError('Tags must be valid JSON')
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        uploaded_file = validated_data['file']
+        tags = validated_data.get('tags', [])
+
+        # Calculate SHA-256 hash
+        file_hash = hashlib.sha256()
+        for chunk in uploaded_file.chunks():
+            file_hash.update(chunk)
+        hash_hex = file_hash.hexdigest()
+
+        # Reset file pointer
+        uploaded_file.seek(0)
+
+        # Determine MIME type
+        mime_type, _ = mimetypes.guess_type(uploaded_file.name)
+        
+        with transaction.atomic():
+            # Check if file already exists
+            existing_file = File.objects.filter(hash=hash_hex).first()
+            
+            if existing_file:
+                # File exists, check if user already has this file with same name
+                existing_user_file = UserFile.objects.filter(
+                    user=user,
+                    file=existing_file,
+                    original_filename=uploaded_file.name,
+                    deleted=False
+                ).first()
+                
+                if existing_user_file:
+                    raise serializers.ValidationError({
+                        'file': 'You already have a file with this name and content'
+                    })
+                
+                # Create new user file association
+                user_file = UserFile.objects.create(
+                    user=user,
+                    file=existing_file,
+                    original_filename=uploaded_file.name,
+                    tags=tags
+                )
+            else:
+                # Create storage path using hash
+                storage_path = f"files/{hash_hex[:2]}/{hash_hex[2:4]}/{hash_hex}"
+                
+                # Save file to storage
+                saved_path = default_storage.save(storage_path, uploaded_file)
+                
+                # Create new file record
+                file_obj = File.objects.create(
+                    hash=hash_hex,
+                    size=uploaded_file.size,
+                    storage_path=saved_path,
+                    mime_type=mime_type
+                )
+                
+                # Create user file association
+                user_file = UserFile.objects.create(
+                    user=user,
+                    file=file_obj,
+                    original_filename=uploaded_file.name,
+                    tags=tags
+                )
+            
+            # Update user storage usage
+            user.storage_used += uploaded_file.size
+            user.save()
+
+        return user_file
+
+    def to_representation(self, instance):
+        return {
+            'id': instance.id,
+            'original_filename': instance.original_filename,
+            'uploaded_at': instance.uploaded_at.isoformat(),
+            'tags': instance.tags,
+            'size': instance.file.size,
+            'mime_type': instance.file.mime_type,
+            'file_hash': instance.file.hash
+        } 

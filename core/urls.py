@@ -6,4 +6,5 @@ urlpatterns = [
     path('login/', views.login, name='login'),
     path('logout/', views.logout, name='logout'),
     path('token/refresh/', views.token_refresh, name='token_refresh'),
+    path('files/upload/', views.file_upload, name='file_upload'),
 ] 
