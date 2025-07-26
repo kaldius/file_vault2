@@ -305,4 +305,17 @@ def file_download(request, file_id):
     response['Content-Disposition'] = f'attachment; filename="{user_file.original_filename}"'
     response['Content-Length'] = file_obj.size
     
-    return response 
+    return response
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def user_profile(request):
+    """
+    Get current user's profile information
+    """
+    from .serializers import UserProfileSerializer
+    
+    user = request.user
+    serializer = UserProfileSerializer(user)
+    return Response(serializer.data) 

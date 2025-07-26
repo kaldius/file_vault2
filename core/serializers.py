@@ -277,4 +277,16 @@ class FileStatsSerializer(serializers.Serializer):
     total_size = serializers.IntegerField()
     storage_used = serializers.IntegerField()
     storage_quota = serializers.IntegerField()
-    storage_percentage = serializers.FloatField() 
+    storage_percentage = serializers.FloatField()
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    """
+    Serializer for user profile information (/api/users/me/)
+    """
+    class Meta:
+        model = User
+        fields = ('id', 'username', 'email', 'first_name', 'last_name', 
+                 'created_at', 'storage_quota', 'storage_used')
+        read_only_fields = ('id', 'username', 'email', 'created_at', 
+                           'storage_quota', 'storage_used') 

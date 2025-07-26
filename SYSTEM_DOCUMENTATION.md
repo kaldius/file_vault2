@@ -178,6 +178,7 @@ CREATE TABLE user_files (
 #### GET `/api/users/me/`
 **Purpose**: Get current user's profile information
 **Authentication**: Required
+**Status**: ✅ Implemented and working
 **Response (200)**:
 ```json
 {
@@ -296,6 +297,7 @@ When a user uploads the same file (same content hash and filename) again after d
 #### GET `/api/files/stats/`
 **Purpose**: Get user's file storage statistics
 **Authentication**: Required
+**Status**: ✅ Implemented and working
 **Response (200)**:
 ```json
 {
