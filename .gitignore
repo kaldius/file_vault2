@@ -44,3 +44,6 @@ Thumbs.db
 
 # Docker
 .dockerignore 
+
+# Frontend
+node_modules/
