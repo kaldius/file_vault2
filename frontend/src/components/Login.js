@@ -18,10 +18,11 @@ const Login = ({ onLogin }) => {
       [name]: value
     }));
     // Clear error when user starts typing
-    if (errors[name]) {
+    if (errors[name] || errors.general) {
       setErrors(prev => ({
         ...prev,
-        [name]: ''
+        [name]: '',
+        general: '' // Clear general error when user starts typing
       }));
     }
   };
@@ -70,7 +71,35 @@ const Login = ({ onLogin }) => {
       if (error.response?.data) {
         const serverErrors = error.response.data;
         if (typeof serverErrors === 'object') {
-          setErrors(serverErrors);
+          // Handle Django REST Framework validation errors
+          const newErrors = {};
+          
+          // Check for non_field_errors (general authentication errors)
+          if (serverErrors.non_field_errors) {
+            newErrors.general = Array.isArray(serverErrors.non_field_errors) 
+              ? serverErrors.non_field_errors[0] 
+              : serverErrors.non_field_errors;
+          }
+          
+          // Handle field-specific errors
+          if (serverErrors.username) {
+            newErrors.username = Array.isArray(serverErrors.username)
+              ? serverErrors.username[0]
+              : serverErrors.username;
+          }
+          
+          if (serverErrors.password) {
+            newErrors.password = Array.isArray(serverErrors.password)
+              ? serverErrors.password[0] 
+              : serverErrors.password;
+          }
+          
+          // If no specific errors were found, set a general error
+          if (Object.keys(newErrors).length === 0) {
+            newErrors.general = 'Invalid username or password';
+          }
+          
+          setErrors(newErrors);
         } else {
           setErrors({ general: 'Invalid username or password' });
         }
@@ -92,7 +121,16 @@ const Login = ({ onLogin }) => {
 
         <form onSubmit={handleSubmit}>
           {errors.general && (
-            <div className="error-message" style={{ marginBottom: '16px', textAlign: 'center' }}>
+            <div className="error-message" style={{ 
+              marginBottom: '16px', 
+              textAlign: 'center',
+              padding: '12px',
+              backgroundColor: '#fef2f2',
+              border: '1px solid #fecaca',
+              borderRadius: '8px',
+              fontSize: '14px',
+              fontWeight: '500'
+            }}>
               {errors.general}
             </div>
           )}
