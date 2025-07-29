@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { authAPI } from '../services/api';
 import { removeAuthTokens, getRefreshToken, setUser } from '../utils/auth';
+import FileUploadModal from './FileUploadModal';
 
 const Dashboard = ({ user, onLogout }) => {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -9,11 +10,23 @@ const Dashboard = ({ user, onLogout }) => {
   const [isLoadingUser, setIsLoadingUser] = useState(false);
   const [userError, setUserError] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [uploadSuccess, setUploadSuccess] = useState(null);
 
   // Fetch fresh user data on component mount
   useEffect(() => {
     fetchUserData();
   }, []);
+
+  // Clear upload success message after 5 seconds
+  useEffect(() => {
+    if (uploadSuccess) {
+      const timer = setTimeout(() => {
+        setUploadSuccess(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [uploadSuccess]);
 
   const fetchUserData = async (showLoading = true) => {
     if (showLoading) {
@@ -55,6 +68,20 @@ const Dashboard = ({ user, onLogout }) => {
 
   const handleRefreshUserData = () => {
     fetchUserData(true);
+  };
+
+  const handleUploadSuccess = (uploadedFile) => {
+    console.log('File uploaded successfully:', uploadedFile);
+    
+    // Show success message
+    setUploadSuccess({
+      filename: uploadedFile.original_filename,
+      size: uploadedFile.size,
+      timestamp: new Date()
+    });
+    
+    // Refresh user data to get updated storage usage
+    fetchUserData(false);
   };
 
   const handleLogout = async () => {
@@ -225,6 +252,41 @@ const Dashboard = ({ user, onLogout }) => {
             </button>
           </div>
         )}
+
+        {uploadSuccess && (
+          <div style={{
+            background: '#ecfdf5',
+            border: '1px solid #86efac',
+            borderRadius: '8px',
+            padding: '12px',
+            marginBottom: '20px',
+            color: '#059669',
+            fontSize: '14px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <div>
+              <strong>✅ Upload Successful!</strong>
+              <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                {uploadSuccess.filename} ({formatBytes(uploadSuccess.size)}) uploaded at {uploadSuccess.timestamp.toLocaleTimeString()}
+              </div>
+            </div>
+            <button 
+              onClick={() => setUploadSuccess(null)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#059669',
+                cursor: 'pointer',
+                fontSize: '16px',
+                padding: '4px'
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )}
         
         <div style={{ 
           background: 'white', 
@@ -242,31 +304,51 @@ const Dashboard = ({ user, onLogout }) => {
             }}>
               Welcome to File Vault!
             </h1>
-            <button 
-              onClick={handleRefreshUserData}
-              disabled={isLoadingUser}
-              style={{
-                padding: '8px 16px',
-                background: isLoadingUser ? '#9ca3af' : '#667eea',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '14px',
-                cursor: isLoadingUser ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}
-            >
-              {isLoadingUser ? (
-                <>
-                  <div className="loading-spinner" style={{ width: '14px', height: '14px' }}></div>
-                  Updating...
-                </>
-              ) : (
-                '🔄 Refresh Data'
-              )}
-            </button>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button 
+                onClick={() => setIsUploadModalOpen(true)}
+                style={{
+                  padding: '8px 16px',
+                  background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontWeight: '500'
+                }}
+              >
+                📤 Upload File
+              </button>
+              <button 
+                onClick={handleRefreshUserData}
+                disabled={isLoadingUser}
+                style={{
+                  padding: '8px 16px',
+                  background: isLoadingUser ? '#9ca3af' : '#667eea',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  cursor: isLoadingUser ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                {isLoadingUser ? (
+                  <>
+                    <div className="loading-spinner" style={{ width: '14px', height: '14px' }}></div>
+                    Updating...
+                  </>
+                ) : (
+                  '🔄 Refresh Data'
+                )}
+              </button>
+            </div>
           </div>
 
           <p style={{ 
@@ -397,16 +479,23 @@ const Dashboard = ({ user, onLogout }) => {
           
           <div style={{ 
             padding: '16px', 
-            background: '#dbeafe', 
+            background: '#ecfdf5', 
             borderRadius: '8px',
-            border: '1px solid #93c5fd'
+            border: '1px solid #86efac'
           }}>
-            <p style={{ color: '#1e40af', fontSize: '14px' }}>
-              🚧 File management features are coming soon! For now, you can register and login to your account.
+            <p style={{ color: '#059669', fontSize: '14px' }}>
+              🎉 File upload is now available! Click the "Upload File" button above to get started.
             </p>
           </div>
         </div>
       </div>
+
+      {/* File Upload Modal */}
+      <FileUploadModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onUploadSuccess={handleUploadSuccess}
+      />
     </div>
   );
 };
