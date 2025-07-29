@@ -18,7 +18,7 @@ File Vault is a secure file storage and management system with user authenticati
 - File upload with automatic deduplication (SHA-256 based)
 - File tagging and search capabilities
 - Storage quota management per user
-- Soft delete functionality
+- Smart delete functionality (soft delete with physical cleanup when appropriate)
 - File statistics and storage usage tracking
 - Background cleanup tasks for orphaned files
 
@@ -274,7 +274,7 @@ CREATE TABLE user_files (
 - Sets appropriate headers for file download
 
 #### DELETE `/api/files/{id}/delete/`
-**Purpose**: Soft delete a user file (removes association, not physical file)
+**Purpose**: Delete a user file association and physically remove file if no other users own it
 **Authentication**: Required
 **Status**: ✅ Implemented and working
 **Response (204)**: No content
@@ -282,17 +282,28 @@ CREATE TABLE user_files (
 **Behavior**:
 - Sets the `deleted` flag to `True` for the user file association
 - Updates user's storage usage by subtracting the file size
-- Does not delete the physical file (allows for deduplication and undelete)
+- **Checks if any other users have non-deleted associations with the same file**
+- **If no other users own the file, physically deletes it from storage and removes the File record**
+- If other users still own the file, preserves the physical file for deduplication
 - Returns 404 if file not found or already deleted
 - Only the file owner can delete their own files
+- Uses database transactions to ensure consistency
+- Gracefully handles storage deletion errors without failing the user association deletion
+
+**Physical File Deletion Logic**:
+- When a user deletes their file, the system checks `UserFile.objects.filter(file=file_obj, deleted=False).exists()`
+- If no active (non-deleted) associations exist, the physical file is removed from storage
+- The corresponding `File` record is also deleted from the database
+- If storage deletion fails, the error is logged but the user association deletion still succeeds
 
 **Undelete Functionality**:
 When a user uploads the same file (same content hash and filename) again after deletion:
-- The system automatically "undeletes" the existing association
+- If the physical file still exists (other users own it), the system automatically "undeletes" the existing association
 - Sets `deleted` flag back to `False`
 - Updates the tags with new values if provided
 - Restores the file size to user's storage usage
 - Returns the same `UserFile` ID as before deletion
+- If the physical file was deleted (no other users owned it), a new file is created normally
 
 ## Key Implementation Details
 
@@ -314,8 +325,8 @@ When a user uploads the same file (same content hash and filename) again after d
 ### Storage Management
 - Default quota: 1GB per user (configurable)
 - Storage usage tracked in real-time during upload/delete
-- Soft delete preserves file associations for recovery
-- Background cleanup task removes orphaned physical files
+- Smart delete preserves physical files when shared by multiple users, removes them when orphaned
+- Automatic cleanup removes orphaned physical files immediately upon deletion
 
 ### Search & Filtering
 - Full-text search across filenames and tags

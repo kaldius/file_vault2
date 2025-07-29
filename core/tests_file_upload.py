@@ -345,13 +345,26 @@ class FileUploadAPITests(APITestCase):
             os.environ['MAX_FILE_SIZE_MB'] = original_limit
 
     def test_file_soft_delete_and_undelete(self):
-        """Test file soft delete and undelete functionality"""
+        """Test file soft delete and undelete functionality when multiple users own the same file"""
+        from django.contrib.auth import get_user_model
+        from rest_framework_simplejwt.tokens import RefreshToken
+        
+        # Create second user first
+        User = get_user_model()
+        user2 = User.objects.create_user(
+            username='testuser2',
+            email='test2@example.com',
+            password='testpass123'
+        )
+        refresh2 = RefreshToken.for_user(user2)
+        access_token2 = str(refresh2.access_token)
+        
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
         
         # Get user's initial storage usage before upload
         initial_storage_used = self.user.storage_used
         
-        # Upload a file
+        # Upload a file as first user
         upload_data = {
             'file': SimpleUploadedFile("test_delete.txt", self.test_file_content, content_type="text/plain"),
             'tags': json.dumps(['delete-test'])
@@ -360,23 +373,31 @@ class FileUploadAPITests(APITestCase):
         self.assertEqual(upload_response.status_code, status.HTTP_201_CREATED)
         
         file_id = upload_response.data['id']
-        
-        # Verify file exists and is not deleted
         user_file = UserFile.objects.get(id=file_id)
-        self.assertFalse(user_file.deleted)
-        
         file_size = user_file.file.size
+        
+        # Second user uploads the same file (creates deduplication)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token2}')
+        upload_data2 = {
+            'file': SimpleUploadedFile("test_delete.txt", self.test_file_content, content_type="text/plain"),
+            'tags': json.dumps(['user2-test'])
+        }
+        upload_response2 = self.client.post(self.upload_url, upload_data2, format='multipart')
+        self.assertEqual(upload_response2.status_code, status.HTTP_201_CREATED)
+        
+        # Back to first user
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
         
         # Verify storage usage increased after upload
         self.user.refresh_from_db()
         self.assertEqual(self.user.storage_used, initial_storage_used + file_size)
         
-        # Delete the file
+        # Delete the file as first user
         delete_url = reverse('file_delete', kwargs={'file_id': file_id})
         delete_response = self.client.delete(delete_url)
         self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
         
-        # Verify file is soft deleted
+        # Verify file is soft deleted (because user2 still owns it)
         user_file.refresh_from_db()
         self.assertTrue(user_file.deleted)
         
@@ -384,14 +405,14 @@ class FileUploadAPITests(APITestCase):
         self.user.refresh_from_db()
         self.assertEqual(self.user.storage_used, initial_storage_used)
         
-        # Verify file doesn't appear in file list
+        # Verify file doesn't appear in file list for user1
         list_url = reverse('file_list')
         list_response = self.client.get(list_url)
         self.assertEqual(list_response.status_code, status.HTTP_200_OK)
         file_ids = [f['id'] for f in list_response.data['results']]
         self.assertNotIn(file_id, file_ids)
         
-        # Upload the same file again (should undelete)
+        # Upload the same file again as first user (should undelete)
         undelete_data = {
             'file': SimpleUploadedFile("test_delete.txt", self.test_file_content, content_type="text/plain"),
             'tags': json.dumps(['undelete-test'])
@@ -454,10 +475,10 @@ class FileUploadAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_undelete_with_different_user(self):
-        """Test that undelete only works for the same user"""
+        """Test that when a file is physically deleted, new uploads create new records"""
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
         
-        # Upload and delete a file as first user
+        # Upload and delete a file as first user (this will physically delete it)
         upload_data = {
             'file': SimpleUploadedFile("user_test.txt", self.test_file_content, content_type="text/plain"),
         }
@@ -466,6 +487,9 @@ class FileUploadAPITests(APITestCase):
         
         delete_url = reverse('file_delete', kwargs={'file_id': file_id})
         self.client.delete(delete_url)
+        
+        # Verify the file was physically deleted (UserFile record no longer exists)
+        self.assertFalse(UserFile.objects.filter(id=file_id).exists())
         
         # Create second user
         user2 = User.objects.create_user(
@@ -476,17 +500,174 @@ class FileUploadAPITests(APITestCase):
         refresh2 = RefreshToken.for_user(user2)
         access_token2 = str(refresh2.access_token)
         
-        # Try to upload same file as second user
+        # Upload same file as second user (should create entirely new record)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token2}')
         upload_data2 = {
             'file': SimpleUploadedFile("user_test.txt", self.test_file_content, content_type="text/plain"),
         }
         response2 = self.client.post(self.upload_url, upload_data2, format='multipart')
         
-        # Should create a new UserFile association, not undelete the first user's file
+        # Should create a new UserFile association with new ID
         self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
         self.assertNotEqual(response2.data['id'], file_id)
         
-        # Verify first user's file is still deleted
-        user_file1 = UserFile.objects.get(id=file_id)
+        # Verify the new file exists and is not deleted
+        new_user_file = UserFile.objects.get(id=response2.data['id'])
+        self.assertFalse(new_user_file.deleted)
+        self.assertEqual(new_user_file.user, user2)
+
+    def test_physical_file_deletion_single_user(self):
+        """Test that physical file is deleted when no users own it"""
+        from django.core.files.storage import default_storage
+        from core.models import File
+        
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        
+        # Upload a file
+        upload_data = {
+            'file': SimpleUploadedFile("unique_delete_test.txt", b"unique content for deletion", content_type="text/plain"),
+            'tags': json.dumps(['physical-delete-test'])
+        }
+        upload_response = self.client.post(self.upload_url, upload_data, format='multipart')
+        self.assertEqual(upload_response.status_code, status.HTTP_201_CREATED)
+        
+        file_id = upload_response.data['id']
+        user_file = UserFile.objects.get(id=file_id)
+        file_obj = user_file.file
+        storage_path = file_obj.storage_path
+        
+        # Verify file exists in storage
+        self.assertTrue(default_storage.exists(storage_path))
+        
+        # Verify File record exists in database
+        self.assertTrue(File.objects.filter(id=file_obj.id).exists())
+        
+        # Delete the file
+        delete_url = reverse('file_delete', kwargs={'file_id': file_id})
+        delete_response = self.client.delete(delete_url)
+        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+        
+        # Verify physical file is deleted from storage
+        self.assertFalse(default_storage.exists(storage_path))
+        
+        # Verify File record is deleted from database
+        self.assertFalse(File.objects.filter(id=file_obj.id).exists())
+        
+        # Verify UserFile record is also deleted (CASCADE from File deletion)
+        self.assertFalse(UserFile.objects.filter(id=file_id).exists())
+
+    def test_physical_file_preserved_with_multiple_users(self):
+        """Test that physical file is NOT deleted when multiple users own the same file"""
+        from django.core.files.storage import default_storage
+        from core.models import File, User
+        from django.contrib.auth import get_user_model
+        from rest_framework_simplejwt.tokens import RefreshToken
+        
+        # Create second user
+        User = get_user_model()
+        user2 = User.objects.create_user(
+            username='testuser2',
+            email='test2@example.com',
+            password='testpass123'
+        )
+        refresh2 = RefreshToken.for_user(user2)
+        access_token2 = str(refresh2.access_token)
+        
+        # User 1 uploads a file
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        upload_data = {
+            'file': SimpleUploadedFile("shared_file.txt", b"shared content", content_type="text/plain"),
+        }
+        upload_response1 = self.client.post(self.upload_url, upload_data, format='multipart')
+        self.assertEqual(upload_response1.status_code, status.HTTP_201_CREATED)
+        
+        file_id1 = upload_response1.data['id']
+        user_file1 = UserFile.objects.get(id=file_id1)
+        file_obj = user_file1.file
+        storage_path = file_obj.storage_path
+        
+        # User 2 uploads the same file (should be deduplicated)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token2}')
+        upload_data2 = {
+            'file': SimpleUploadedFile("shared_file.txt", b"shared content", content_type="text/plain"),
+        }
+        upload_response2 = self.client.post(self.upload_url, upload_data2, format='multipart')
+        self.assertEqual(upload_response2.status_code, status.HTTP_201_CREATED)
+        
+        file_id2 = upload_response2.data['id']
+        user_file2 = UserFile.objects.get(id=file_id2)
+        
+        # Verify both users reference the same File object
+        self.assertEqual(user_file1.file.id, user_file2.file.id)
+        
+        # Verify file exists in storage
+        self.assertTrue(default_storage.exists(storage_path))
+        
+        # User 1 deletes their file
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        delete_url = reverse('file_delete', kwargs={'file_id': file_id1})
+        delete_response = self.client.delete(delete_url)
+        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+        
+        # Verify User 1's file is soft deleted
+        user_file1.refresh_from_db()
         self.assertTrue(user_file1.deleted)
+        
+        # Verify physical file still exists (User 2 still owns it)
+        self.assertTrue(default_storage.exists(storage_path))
+        
+        # Verify File record still exists in database
+        self.assertTrue(File.objects.filter(id=file_obj.id).exists())
+        
+        # Verify User 2's file is still active
+        user_file2.refresh_from_db()
+        self.assertFalse(user_file2.deleted)
+        
+        # Now User 2 also deletes their file
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token2}')
+        delete_url2 = reverse('file_delete', kwargs={'file_id': file_id2})
+        delete_response2 = self.client.delete(delete_url2)
+        self.assertEqual(delete_response2.status_code, status.HTTP_204_NO_CONTENT)
+        
+        # Now the physical file should be deleted (no users own it)
+        self.assertFalse(default_storage.exists(storage_path))
+        
+        # Verify File record is deleted from database
+        self.assertFalse(File.objects.filter(id=file_obj.id).exists())
+        
+        # Verify both UserFile records are also deleted (CASCADE from File deletion)
+        self.assertFalse(UserFile.objects.filter(id=file_id1).exists())
+        self.assertFalse(UserFile.objects.filter(id=file_id2).exists())
+
+    def test_delete_file_with_storage_error(self):
+        """Test that deletion gracefully handles storage errors"""
+        from unittest.mock import patch
+        from django.core.files.storage import default_storage
+        
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        
+        # Upload a file
+        upload_data = {
+            'file': SimpleUploadedFile("error_test.txt", b"test content", content_type="text/plain"),
+        }
+        upload_response = self.client.post(self.upload_url, upload_data, format='multipart')
+        self.assertEqual(upload_response.status_code, status.HTTP_201_CREATED)
+        
+        file_id = upload_response.data['id']
+        user_file = UserFile.objects.get(id=file_id)
+        file_obj = user_file.file
+        
+        # Mock storage.delete to raise an exception
+        with patch.object(default_storage, 'delete', side_effect=Exception("Storage error")):
+            # Delete the file (should not fail even though storage deletion fails)
+            delete_url = reverse('file_delete', kwargs={'file_id': file_id})
+            delete_response = self.client.delete(delete_url)
+            self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+        
+        # Verify user storage is updated despite storage error
+        self.user.refresh_from_db()
+        # (storage_used should be reduced regardless of physical deletion success)
+        
+        # Even with storage error, UserFile should still be marked as deleted
+        user_file.refresh_from_db()
+        self.assertTrue(user_file.deleted)

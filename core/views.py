@@ -196,8 +196,11 @@ def file_detail(request, file_id):
 @permission_classes([IsAuthenticated])
 def file_delete(request, file_id):
     """
-    Soft delete a user file (removes association, not physical file)
+    Delete a user file. If no other users own the file, physically delete it from storage.
     """
+    from django.core.files.storage import default_storage
+    from django.db import transaction
+    
     user = request.user
     
     try:
@@ -212,13 +215,36 @@ def file_delete(request, file_id):
             status=status.HTTP_404_NOT_FOUND
         )
     
-    # Perform soft delete
-    user_file.deleted = True
-    user_file.save()
+    file_obj = user_file.file
     
-    # Update user storage usage
-    user.storage_used -= user_file.file.size
-    user.save()
+    with transaction.atomic():
+        # Perform soft delete
+        user_file.deleted = True
+        user_file.save()
+        
+        # Update user storage usage
+        user.storage_used -= file_obj.size
+        user.save()
+        
+        # Check if any other users still have non-deleted associations with this file
+        remaining_associations = UserFile.objects.filter(
+            file=file_obj,
+            deleted=False
+        ).exists()
+        
+        # If no users own this file anymore, physically delete it
+        if not remaining_associations:
+            try:
+                if default_storage.exists(file_obj.storage_path):
+                    default_storage.delete(file_obj.storage_path)
+                # Also delete the File record from database
+                file_obj.delete()
+            except Exception as e:
+                # Log the error but don't fail the request since the user association was already deleted
+                # This prevents orphaned file records in case of storage deletion failure
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to delete physical file {file_obj.storage_path}: {str(e)}")
     
     return Response(status=status.HTTP_204_NO_CONTENT)
 
