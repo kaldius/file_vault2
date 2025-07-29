@@ -75,6 +75,11 @@ function App() {
     clearAuthData();
   };
 
+  const handleUserUpdate = (updatedUserData) => {
+    console.log('User data updated:', updatedUserData.username);
+    setUser(updatedUserData);
+  };
+
   // Show loading spinner while checking authentication
   if (loading || !authChecked) {
     return (
@@ -117,7 +122,11 @@ function App() {
             path="/dashboard" 
             element={
               user ? (
-                <Dashboard user={user} onLogout={handleLogout} />
+                <Dashboard 
+                  user={user} 
+                  onLogout={handleLogout}
+                  onUserUpdate={handleUserUpdate}
+                />
               ) : (
                 <Navigate to="/login" replace />
               )

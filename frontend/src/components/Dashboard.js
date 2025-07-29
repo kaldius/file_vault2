@@ -1,10 +1,61 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { authAPI } from '../services/api';
-import { removeAuthTokens, getRefreshToken } from '../utils/auth';
+import { removeAuthTokens, getRefreshToken, setUser } from '../utils/auth';
 
 const Dashboard = ({ user, onLogout }) => {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState('');
+  const [currentUser, setCurrentUser] = useState(user);
+  const [isLoadingUser, setIsLoadingUser] = useState(false);
+  const [userError, setUserError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  // Fetch fresh user data on component mount
+  useEffect(() => {
+    fetchUserData();
+  }, []);
+
+  const fetchUserData = async (showLoading = true) => {
+    if (showLoading) {
+      setIsLoadingUser(true);
+    }
+    setUserError('');
+
+    try {
+      console.log('Fetching fresh user data from /api/users/me...');
+      const response = await authAPI.getCurrentUser();
+      const userData = response.data;
+      
+      console.log('Fresh user data received:', userData);
+      
+      // Update local state
+      setCurrentUser(userData);
+      setLastUpdated(new Date());
+      
+      // Update stored user data
+      setUser(userData);
+      
+    } catch (error) {
+      console.error('Failed to fetch user data:', error);
+      
+      if (error.response?.status === 401) {
+        setUserError('Session expired. Please log in again.');
+        // Don't automatically logout here as the token refresh should handle this
+      } else if (error.type === 'network_error') {
+        setUserError('Network error. Using cached user data.');
+      } else {
+        setUserError('Failed to load user data. Using cached information.');
+      }
+    } finally {
+      if (showLoading) {
+        setIsLoadingUser(false);
+      }
+    }
+  };
+
+  const handleRefreshUserData = () => {
+    fetchUserData(true);
+  };
 
   const handleLogout = async () => {
     if (isLoggingOut) return; // Prevent double-clicks
@@ -58,11 +109,39 @@ const Dashboard = ({ user, onLogout }) => {
       if (refreshToken) {
         await authAPI.refreshToken(refreshToken);
         console.log('Token refreshed manually');
+        // Fetch fresh user data after token refresh
+        fetchUserData(false);
       }
     } catch (error) {
       console.error('Manual token refresh failed:', error);
     }
   };
+
+  const formatBytes = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const getStoragePercentage = () => {
+    if (!currentUser?.storage_quota || currentUser.storage_quota === 0) return 0;
+    return Math.round((currentUser.storage_used / currentUser.storage_quota) * 100);
+  };
+
+  const displayUser = currentUser || user;
 
   return (
     <div className="dashboard">
@@ -72,7 +151,15 @@ const Dashboard = ({ user, onLogout }) => {
             <div className="navbar-brand">File Vault</div>
             <div className="navbar-user">
               <div className="user-info">
-                Welcome, {user.first_name} {user.last_name}
+                Welcome, {displayUser.first_name} {displayUser.last_name}
+                {isLoadingUser && (
+                  <div className="loading-spinner" style={{ 
+                    width: '12px', 
+                    height: '12px', 
+                    marginLeft: '8px', 
+                    display: 'inline-block' 
+                  }}></div>
+                )}
               </div>
               <button 
                 onClick={handleLogout} 
@@ -107,6 +194,37 @@ const Dashboard = ({ user, onLogout }) => {
             {logoutError}
           </div>
         )}
+
+        {userError && (
+          <div style={{
+            background: '#fef3cd',
+            border: '1px solid #fde047',
+            borderRadius: '8px',
+            padding: '12px',
+            marginBottom: '20px',
+            color: '#d97706',
+            fontSize: '14px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <span>{userError}</span>
+            <button 
+              onClick={handleRefreshUserData}
+              style={{
+                padding: '4px 8px',
+                background: '#d97706',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                fontSize: '12px',
+                cursor: 'pointer'
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
         
         <div style={{ 
           background: 'white', 
@@ -115,14 +233,42 @@ const Dashboard = ({ user, onLogout }) => {
           textAlign: 'center',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
         }}>
-          <h1 style={{ 
-            fontSize: '32px', 
-            fontWeight: '700', 
-            color: '#1f2937', 
-            marginBottom: '16px' 
-          }}>
-            Welcome to File Vault!
-          </h1>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h1 style={{ 
+              fontSize: '32px', 
+              fontWeight: '700', 
+              color: '#1f2937', 
+              margin: 0
+            }}>
+              Welcome to File Vault!
+            </h1>
+            <button 
+              onClick={handleRefreshUserData}
+              disabled={isLoadingUser}
+              style={{
+                padding: '8px 16px',
+                background: isLoadingUser ? '#9ca3af' : '#667eea',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                cursor: isLoadingUser ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              {isLoadingUser ? (
+                <>
+                  <div className="loading-spinner" style={{ width: '14px', height: '14px' }}></div>
+                  Updating...
+                </>
+              ) : (
+                '🔄 Refresh Data'
+              )}
+            </button>
+          </div>
+
           <p style={{ 
             fontSize: '18px', 
             color: '#6b7280', 
@@ -138,31 +284,62 @@ const Dashboard = ({ user, onLogout }) => {
             border: '1px solid #e5e7eb',
             marginBottom: '24px'
           }}>
-            <h2 style={{ 
-              fontSize: '20px', 
-              fontWeight: '600', 
-              color: '#374151', 
-              marginBottom: '16px' 
-            }}>
-              Account Information
-            </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2 style={{ 
+                fontSize: '20px', 
+                fontWeight: '600', 
+                color: '#374151', 
+                margin: 0
+              }}>
+                Account Information
+              </h2>
+              {lastUpdated && (
+                <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                  Last updated: {lastUpdated.toLocaleTimeString()}
+                </span>
+              )}
+            </div>
+            
             <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
-              gap: '16px',
-              textAlign: 'left' 
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+              textAlign: 'left',
+              marginBottom: '20px'
             }}>
               <div>
-                <strong>Username:</strong> {user.username}
+                <strong>Username:</strong> {displayUser.username}
               </div>
               <div>
-                <strong>Email:</strong> {user.email}
+                <strong>Email:</strong> {displayUser.email}
               </div>
               <div>
-                <strong>Storage Quota:</strong> {Math.round(user.storage_quota / (1024 * 1024 * 1024))} GB
+                <strong>Member Since:</strong> {formatDate(displayUser.created_at)}
               </div>
-              <div>
-                <strong>Storage Used:</strong> {Math.round(user.storage_used / (1024 * 1024))} MB
+            </div>
+
+            {/* Storage Usage Visualization */}
+            <div style={{ marginTop: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <span style={{ fontWeight: '600', color: '#374151' }}>Storage Usage</span>
+                <span style={{ fontSize: '14px', color: '#6b7280' }}>
+                  {formatBytes(displayUser.storage_used)} / {formatBytes(displayUser.storage_quota)} 
+                  ({getStoragePercentage()}%)
+                </span>
+              </div>
+              <div style={{
+                width: '100%',
+                height: '12px',
+                backgroundColor: '#e5e7eb',
+                borderRadius: '6px',
+                overflow: 'hidden'
+              }}>
+                <div style={{
+                  width: `${Math.min(getStoragePercentage(), 100)}%`,
+                  height: '100%',
+                  backgroundColor: getStoragePercentage() > 90 ? '#ef4444' : getStoragePercentage() > 75 ? '#f59e0b' : '#10b981',
+                  transition: 'width 0.3s ease'
+                }}></div>
               </div>
             </div>
           </div>
