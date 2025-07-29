@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { fileAPI } from '../services/api';
 
-const FileDetailsModal = ({ isOpen, onClose, fileId }) => {
+const FileDetailsModal = ({ isOpen, onClose, fileId, onFileDeleted }) => {
   const [fileDetails, setFileDetails] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Fetch file details when modal opens
   useEffect(() => {
@@ -44,6 +46,7 @@ const FileDetailsModal = ({ isOpen, onClose, fileId }) => {
   const handleClose = () => {
     setFileDetails(null);
     setError('');
+    setShowDeleteConfirm(false);
     onClose();
   };
 
@@ -124,6 +127,50 @@ const FileDetailsModal = ({ isOpen, onClose, fileId }) => {
   const truncateHash = (hash) => {
     if (!hash) return 'N/A';
     return hash.length > 16 ? `${hash.substring(0, 16)}...` : hash;
+  };
+
+  const handleDeleteFile = async () => {
+    setIsDeleting(true);
+    setError('');
+
+    try {
+      console.log(`Deleting file ID: ${fileId}`);
+      await fileAPI.deleteFile(fileId);
+      console.log('File deleted successfully');
+      
+      // Notify parent component about deletion
+      if (onFileDeleted) {
+        onFileDeleted(fileId);
+      }
+      
+      // Close modal
+      handleClose();
+    } catch (error) {
+      console.error('Failed to delete file:', error);
+      
+      if (error.response?.status === 404) {
+        setError('File not found or already deleted.');
+      } else if (error.response?.status === 401) {
+        setError('Session expired. Please log in again.');
+      } else if (error.response?.status === 403) {
+        setError('You do not have permission to delete this file.');
+      } else if (error.type === 'network_error') {
+        setError('Network error. Please check your connection.');
+      } else {
+        setError('Failed to delete file. Please try again.');
+      }
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
+  const confirmDelete = () => {
+    setShowDeleteConfirm(true);
+  };
+
+  const cancelDelete = () => {
+    setShowDeleteConfirm(false);
   };
 
   if (!isOpen) return null;
@@ -397,16 +444,100 @@ const FileDetailsModal = ({ isOpen, onClose, fileId }) => {
               )}
             </div>
 
+            {/* Delete Confirmation */}
+            {showDeleteConfirm && (
+              <div style={{
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                borderRadius: '8px',
+                padding: '16px',
+                marginBottom: '16px'
+              }}>
+                <h4 style={{
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  color: '#dc2626',
+                  margin: '0 0 8px 0'
+                }}>
+                  ⚠️ Confirm File Deletion
+                </h4>
+                <p style={{
+                  fontSize: '14px',
+                  color: '#7f1d1d',
+                  margin: '0 0 16px 0',
+                  lineHeight: '1.5'
+                }}>
+                  Are you sure you want to delete "<strong>{fileDetails?.original_filename}</strong>"? 
+                  This action cannot be undone.
+                </p>
+                <div style={{
+                  display: 'flex',
+                  gap: '8px',
+                  justifyContent: 'flex-end'
+                }}>
+                  <button
+                    onClick={cancelDelete}
+                    disabled={isDeleting}
+                    style={{
+                      padding: '6px 12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '4px',
+                      background: 'white',
+                      color: '#374151',
+                      fontSize: '12px',
+                      cursor: isDeleting ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleDeleteFile}
+                    disabled={isDeleting}
+                    style={{
+                      padding: '6px 12px',
+                      border: 'none',
+                      borderRadius: '4px',
+                      background: isDeleting ? '#fca5a5' : '#dc2626',
+                      color: 'white',
+                      fontSize: '12px',
+                      cursor: isDeleting ? 'not-allowed' : 'pointer',
+                      fontWeight: '500'
+                    }}
+                  >
+                    {isDeleting ? '🗑️ Deleting...' : '🗑️ Delete File'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Actions */}
             <div style={{
               display: 'flex',
-              justifyContent: 'flex-end',
+              justifyContent: 'space-between',
               gap: '12px',
               paddingTop: '16px',
               borderTop: '1px solid #e5e7eb'
             }}>
               <button
+                onClick={confirmDelete}
+                disabled={isDeleting || isLoading || !fileDetails}
+                style={{
+                  padding: '8px 16px',
+                  border: 'none',
+                  borderRadius: '6px',
+                  background: (isDeleting || isLoading || !fileDetails) ? '#fca5a5' : '#dc2626',
+                  color: 'white',
+                  fontSize: '14px',
+                  cursor: (isDeleting || isLoading || !fileDetails) ? 'not-allowed' : 'pointer',
+                  fontWeight: '500'
+                }}
+              >
+                {isDeleting ? '🗑️ Deleting...' : '🗑️ Delete'}
+              </button>
+              
+              <button
                 onClick={handleClose}
+                disabled={isDeleting}
                 style={{
                   padding: '8px 16px',
                   border: '1px solid #d1d5db',
@@ -414,7 +545,7 @@ const FileDetailsModal = ({ isOpen, onClose, fileId }) => {
                   background: 'white',
                   color: '#374151',
                   fontSize: '14px',
-                  cursor: 'pointer'
+                  cursor: isDeleting ? 'not-allowed' : 'pointer'
                 }}
               >
                 Close

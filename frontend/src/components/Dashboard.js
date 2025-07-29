@@ -32,6 +32,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [sizeMax, setSizeMax] = useState(1073741824); // 1GB in bytes
   const [activeSizeMin, setActiveSizeMin] = useState(0);
   const [activeSizeMax, setActiveSizeMax] = useState(1073741824);
+  const [activeTag, setActiveTag] = useState('');
 
 
 
@@ -44,14 +45,14 @@ const Dashboard = ({ user, onLogout }) => {
   // Refetch files when page, page size, or active search/filter terms change
   useEffect(() => {
     fetchFiles();
-  }, [currentPage, pageSize, activeSearchTerm, activeSizeMin, activeSizeMax]);
+  }, [currentPage, pageSize, activeSearchTerm, activeSizeMin, activeSizeMax, activeTag]);
 
-  // Reset to page 1 when active search term or size filters change
+  // Reset to page 1 when active search term, size filters, or tag filter change
   useEffect(() => {
-    if (activeSearchTerm !== '' || activeSizeMin > 0 || activeSizeMax < 1073741824) {
+    if (activeSearchTerm !== '' || activeSizeMin > 0 || activeSizeMax < 1073741824 || activeTag !== '') {
       setCurrentPage(1);
     }
-  }, [activeSearchTerm, activeSizeMin, activeSizeMax]);
+  }, [activeSearchTerm, activeSizeMin, activeSizeMax, activeTag]);
 
   // Clear upload success message after 5 seconds
   useEffect(() => {
@@ -127,10 +128,16 @@ const Dashboard = ({ user, onLogout }) => {
         params.size_max = activeSizeMax;
       }
 
+      // Add tag filter parameter if active
+      if (activeTag.trim()) {
+        params.tags = activeTag.trim();
+      }
+
       const filterDescription = [];
       if (activeSearchTerm) filterDescription.push(`search "${activeSearchTerm}"`);
       if (activeSizeMin > 0) filterDescription.push(`min size ${formatBytesShort(activeSizeMin)}`);
       if (activeSizeMax < 1073741824) filterDescription.push(`max size ${formatBytesShort(activeSizeMax)}`);
+      if (activeTag) filterDescription.push(`tag "${activeTag}"`);
       
       console.log(`Fetching files page ${currentPage} with size ${pageSize}${filterDescription.length ? ` and filters: ${filterDescription.join(', ')}` : ''}...`);
       const response = await fileAPI.getFiles(params);
@@ -209,6 +216,11 @@ const Dashboard = ({ user, onLogout }) => {
     setCurrentPage(1);
   };
 
+  const handleTagFilter = (tag) => {
+    setActiveTag(tag);
+    setCurrentPage(1); // Reset to first page when filtering
+  };
+
   const handleSearchKeyPress = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -223,6 +235,7 @@ const Dashboard = ({ user, onLogout }) => {
     setSizeMax(1073741824);
     setActiveSizeMin(0);
     setActiveSizeMax(1073741824);
+    setActiveTag('');
     setCurrentPage(1);
   };
 
@@ -253,7 +266,7 @@ const Dashboard = ({ user, onLogout }) => {
   };
 
   const hasActiveFilters = () => {
-    return activeSearchTerm !== '' || activeSizeMin > 0 || activeSizeMax < 1073741824;
+    return activeSearchTerm !== '' || activeSizeMin > 0 || activeSizeMax < 1073741824 || activeTag !== '';
   };
 
   const handleFileClick = (fileId) => {
@@ -264,6 +277,22 @@ const Dashboard = ({ user, onLogout }) => {
   const handleCloseDetailsModal = () => {
     setIsDetailsModalOpen(false);
     setSelectedFileId(null);
+  };
+
+  const handleFileDeleted = (deletedFileId) => {
+    console.log(`File ${deletedFileId} was deleted, refreshing data...`);
+    
+    // Refresh both user data (storage usage) and file list
+    fetchUserData(false);
+    fetchFiles(false);
+    
+    // Show success message
+    setUploadSuccess({
+      filename: 'File deleted successfully!',
+      size: null,
+      timestamp: new Date(),
+      isDeletion: true
+    });
   };
 
   const handleLogout = async () => {
@@ -453,21 +482,25 @@ const Dashboard = ({ user, onLogout }) => {
 
         {uploadSuccess && (
           <div style={{
-            background: '#ecfdf5',
-            border: '1px solid #86efac',
+            background: uploadSuccess.isDeletion ? '#fef2f2' : '#ecfdf5',
+            border: uploadSuccess.isDeletion ? '1px solid #fca5a5' : '1px solid #86efac',
             borderRadius: '8px',
             padding: '12px',
             marginBottom: '20px',
-            color: '#059669',
+            color: uploadSuccess.isDeletion ? '#dc2626' : '#059669',
             fontSize: '14px',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center'
           }}>
             <div>
-              <strong>✅ Upload Successful!</strong>
+              <strong>{uploadSuccess.isDeletion ? '🗑️ Deletion Successful!' : '✅ Upload Successful!'}</strong>
               <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                {uploadSuccess.filename} ({formatBytes(uploadSuccess.size)}) uploaded at {uploadSuccess.timestamp.toLocaleTimeString()}
+                {uploadSuccess.isDeletion ? (
+                  `${uploadSuccess.filename} at ${uploadSuccess.timestamp.toLocaleTimeString()}`
+                ) : (
+                  `${uploadSuccess.filename} (${formatBytes(uploadSuccess.size)}) uploaded at ${uploadSuccess.timestamp.toLocaleTimeString()}`
+                )}
               </div>
             </div>
             <button 
@@ -475,7 +508,7 @@ const Dashboard = ({ user, onLogout }) => {
               style={{
                 background: 'none',
                 border: 'none',
-                color: '#059669',
+                color: uploadSuccess.isDeletion ? '#dc2626' : '#059669',
                 cursor: 'pointer',
                 fontSize: '16px',
                 padding: '4px'
@@ -623,68 +656,6 @@ const Dashboard = ({ user, onLogout }) => {
                 }}></div>
               </div>
             </div>
-          </div>
-
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', 
-            gap: '16px',
-            marginBottom: '24px'
-          }}>
-            <div style={{ 
-              background: '#dbeafe', 
-              borderRadius: '8px',
-              padding: '16px',
-              border: '1px solid #93c5fd'
-            }}>
-              <h3 style={{ color: '#1e40af', fontSize: '16px', fontWeight: '600', marginBottom: '8px' }}>
-                🔐 Authentication Status
-              </h3>
-              <p style={{ color: '#1e40af', fontSize: '14px', marginBottom: '12px' }}>
-                You are securely logged in with JWT tokens
-              </p>
-              <button 
-                onClick={handleManualTokenRefresh}
-                style={{
-                  padding: '6px 12px',
-                  background: '#3b82f6',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  fontSize: '12px',
-                  cursor: 'pointer'
-                }}
-              >
-                Refresh Token
-              </button>
-            </div>
-
-            <div style={{ 
-              background: '#ecfdf5', 
-              borderRadius: '8px',
-              padding: '16px',
-              border: '1px solid #86efac'
-            }}>
-              <h3 style={{ color: '#059669', fontSize: '16px', fontWeight: '600', marginBottom: '8px' }}>
-                🚀 System Status
-              </h3>
-              <p style={{ color: '#059669', fontSize: '14px' }}>
-                All systems operational<br/>
-                Backend API connected<br/>
-                Database accessible
-              </p>
-            </div>
-          </div>
-          
-          <div style={{ 
-            padding: '16px', 
-            background: '#ecfdf5', 
-            borderRadius: '8px',
-            border: '1px solid #86efac'
-          }}>
-            <p style={{ color: '#059669', fontSize: '14px' }}>
-              🎉 File upload is now available! Click the "Upload File" button above to get started.
-            </p>
           </div>
         </div>
 
@@ -948,6 +919,34 @@ const Dashboard = ({ user, onLogout }) => {
                   {activeSearchTerm && <span> filename "<strong>{activeSearchTerm}</strong>"</span>}
                   {activeSizeMin > 0 && <span> min size <strong>{formatBytesShort(activeSizeMin)}</strong></span>}
                   {activeSizeMax < 1073741824 && <span> max size <strong>{formatBytesShort(activeSizeMax)}</strong></span>}
+                  {activeTag && (
+                    <span> tag <span style={{
+                      padding: '2px 6px',
+                      backgroundColor: '#e0e7ff',
+                      color: '#3730a3',
+                      borderRadius: '8px',
+                      fontSize: '11px',
+                      fontWeight: '500',
+                      margin: '0 2px'
+                    }}><strong>{activeTag}</strong></span>
+                      <button
+                        onClick={() => setActiveTag('')}
+                        style={{
+                          marginLeft: '4px',
+                          padding: '1px 4px',
+                          background: '#dc2626',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '2px',
+                          fontSize: '10px',
+                          cursor: 'pointer'
+                        }}
+                        title="Clear tag filter"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )}
                   <button
                     onClick={handleClearSearch}
                     style={{
@@ -967,6 +966,7 @@ const Dashboard = ({ user, onLogout }) => {
               ) : (
                 <>
                   No files found with current filters
+                  {activeTag && <span> (tag: <strong>{activeTag}</strong>)</span>}
                   <button
                     onClick={handleClearSearch}
                     style={{
@@ -1081,14 +1081,32 @@ const Dashboard = ({ user, onLogout }) => {
                           {file.tags.slice(0, 2).map((tag, index) => (
                             <span
                               key={index}
+                              onClick={(e) => {
+                                e.stopPropagation(); // Prevent opening file details modal
+                                handleTagFilter(tag);
+                              }}
                               style={{
                                 padding: '2px 6px',
-                                backgroundColor: '#e0e7ff',
-                                color: '#3730a3',
+                                backgroundColor: activeTag === tag ? '#3730a3' : '#e0e7ff',
+                                color: activeTag === tag ? 'white' : '#3730a3',
                                 borderRadius: '12px',
                                 fontSize: '11px',
-                                fontWeight: '500'
+                                fontWeight: '500',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                border: activeTag === tag ? '1px solid #3730a3' : '1px solid transparent'
                               }}
+                              onMouseEnter={(e) => {
+                                if (activeTag !== tag) {
+                                  e.target.style.backgroundColor = '#c7d2fe';
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                if (activeTag !== tag) {
+                                  e.target.style.backgroundColor = '#e0e7ff';
+                                }
+                              }}
+                              title={`Click to filter by tag: ${tag}`}
                             >
                               {tag}
                             </span>
@@ -1221,6 +1239,7 @@ const Dashboard = ({ user, onLogout }) => {
         isOpen={isDetailsModalOpen}
         onClose={handleCloseDetailsModal}
         fileId={selectedFileId}
+        onFileDeleted={handleFileDeleted}
       />
     </div>
   );
