@@ -23,6 +23,8 @@ const Dashboard = ({ user, onLogout }) => {
   const [totalPages, setTotalPages] = useState(0);
   const [hasNext, setHasNext] = useState(false);
   const [hasPrevious, setHasPrevious] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [activeSearchTerm, setActiveSearchTerm] = useState('');
 
   // Fetch fresh user data on component mount
   useEffect(() => {
@@ -30,10 +32,17 @@ const Dashboard = ({ user, onLogout }) => {
     fetchFiles();
   }, []);
 
-  // Refetch files when page or page size changes
+  // Refetch files when page, page size, or active search term changes
   useEffect(() => {
     fetchFiles();
-  }, [currentPage, pageSize]);
+  }, [currentPage, pageSize, activeSearchTerm]);
+
+  // Reset to page 1 when active search term changes
+  useEffect(() => {
+    if (activeSearchTerm !== '') {
+      setCurrentPage(1);
+    }
+  }, [activeSearchTerm]);
 
   // Clear upload success message after 5 seconds
   useEffect(() => {
@@ -90,12 +99,19 @@ const Dashboard = ({ user, onLogout }) => {
     setFilesError('');
 
     try {
-      console.log(`Fetching files page ${currentPage} with size ${pageSize}...`);
-      const response = await fileAPI.getFiles({
+      const params = {
         page: currentPage,
         page_size: pageSize,
         ordering: '-uploaded_at' // Show newest first
-      });
+      };
+
+      // Add search parameter if search term exists
+      if (activeSearchTerm.trim()) {
+        params.filename = activeSearchTerm.trim();
+      }
+
+      console.log(`Fetching files page ${currentPage} with size ${pageSize}${activeSearchTerm ? ` and search "${activeSearchTerm}"` : ''}...`);
+      const response = await fileAPI.getFiles(params);
       
       const data = response.data;
       console.log('Files received:', data);
@@ -158,6 +174,28 @@ const Dashboard = ({ user, onLogout }) => {
   const handlePageSizeChange = (newPageSize) => {
     setPageSize(newPageSize);
     setCurrentPage(1); // Reset to first page when changing page size
+  };
+
+  const handleSearchChange = (e) => {
+    setSearchTerm(e.target.value);
+  };
+
+  const handleSearch = () => {
+    setActiveSearchTerm(searchTerm.trim());
+    setCurrentPage(1);
+  };
+
+  const handleSearchKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSearch();
+    }
+  };
+
+  const handleClearSearch = () => {
+    setSearchTerm('');
+    setActiveSearchTerm('');
+    setCurrentPage(1);
   };
 
   const handleLogout = async () => {
@@ -598,7 +636,78 @@ const Dashboard = ({ user, onLogout }) => {
             }}>
               Your Files
             </h2>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+              {/* Search Input */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '200px' }}>
+                <div style={{ position: 'relative', flex: 1 }}>
+                  <input
+                    type="text"
+                    placeholder="Search by filename"
+                    value={searchTerm}
+                    onChange={handleSearchChange}
+                    onKeyPress={handleSearchKeyPress}
+                    disabled={isLoadingFiles}
+                    style={{
+                      width: '100%',
+                      padding: '6px 80px 6px 12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      backgroundColor: isLoadingFiles ? '#f3f4f6' : 'white'
+                    }}
+                  />
+                  <div style={{
+                    position: 'absolute',
+                    right: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    display: 'flex',
+                    gap: '4px',
+                    alignItems: 'center'
+                  }}>
+                    <button
+                      onClick={handleSearch}
+                      disabled={isLoadingFiles || !searchTerm.trim()}
+                      style={{
+                        background: (!searchTerm.trim() || isLoadingFiles) ? '#9ca3af' : '#667eea',
+                        border: 'none',
+                        color: 'white',
+                        cursor: (!searchTerm.trim() || isLoadingFiles) ? 'not-allowed' : 'pointer',
+                        fontSize: '11px',
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        fontWeight: '500'
+                      }}
+                      title="Search files"
+                    >
+                      {isLoadingFiles ? (
+                        <div className="loading-spinner" style={{ width: '10px', height: '10px' }}></div>
+                      ) : (
+                        'Search'
+                      )}
+                    </button>
+                    {(searchTerm || activeSearchTerm) && (
+                      <button
+                        onClick={handleClearSearch}
+                        disabled={isLoadingFiles}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#6b7280',
+                          cursor: isLoadingFiles ? 'not-allowed' : 'pointer',
+                          fontSize: '16px',
+                          padding: '2px',
+                          borderRadius: '2px'
+                        }}
+                        title="Clear search"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               {/* Page Size Selector */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '14px', color: '#6b7280' }}>Show:</span>
@@ -682,18 +791,80 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
           )}
 
+                     {/* Search Results Info */}
+          {activeSearchTerm && !isLoadingFiles && (
+            <div style={{
+              background: '#f0f9ff',
+              border: '1px solid #bae6fd',
+              borderRadius: '8px',
+              padding: '12px',
+              marginBottom: '16px',
+              fontSize: '14px',
+              color: '#0c4a6e'
+            }}>
+              {files.length > 0 ? (
+                <>
+                  Found <strong>{totalFiles}</strong> file{totalFiles !== 1 ? 's' : ''} matching "<strong>{activeSearchTerm}</strong>"
+                  <button
+                    onClick={handleClearSearch}
+                    style={{
+                      marginLeft: '12px',
+                      padding: '2px 8px',
+                      background: '#0ea5e9',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Clear search
+                  </button>
+                </>
+              ) : (
+                <>
+                  No files found matching "<strong>{activeSearchTerm}</strong>"
+                  <button
+                    onClick={handleClearSearch}
+                    style={{
+                      marginLeft: '12px',
+                      padding: '2px 8px',
+                      background: '#0ea5e9',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Clear search
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Files List */}
           {isLoadingFiles ? (
             <div style={{ textAlign: 'center', padding: '40px' }}>
               <div className="loading-spinner" style={{ margin: '0 auto 16px' }}></div>
-              <p style={{ color: '#6b7280', fontSize: '14px' }}>Loading your files...</p>
+              <p style={{ color: '#6b7280', fontSize: '14px' }}>
+                {activeSearchTerm ? `Searching for "${activeSearchTerm}"...` : 'Loading your files...'}
+              </p>
             </div>
           ) : files.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px' }}>
-              <div style={{ fontSize: '48px', marginBottom: '16px' }}>📁</div>
-              <h3 style={{ color: '#374151', marginBottom: '8px' }}>No files yet</h3>
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>
+                {activeSearchTerm ? '🔍' : '📁'}
+              </div>
+              <h3 style={{ color: '#374151', marginBottom: '8px' }}>
+                {activeSearchTerm ? 'No files found' : 'No files yet'}
+              </h3>
               <p style={{ color: '#6b7280', fontSize: '14px' }}>
-                Upload your first file to get started!
+                {activeSearchTerm 
+                  ? `No files match "${activeSearchTerm}". Try a different search term.`
+                  : 'Upload your first file to get started!'
+                }
               </p>
             </div>
           ) : (
@@ -794,9 +965,12 @@ const Dashboard = ({ user, onLogout }) => {
                   alignItems: 'center',
                   padding: '16px 0'
                 }}>
-                  <div style={{ fontSize: '14px', color: '#6b7280' }}>
-                    Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalFiles)} of {totalFiles} files
-                  </div>
+                                     <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                     Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalFiles)} of {totalFiles} files
+                     {activeSearchTerm && (
+                       <span style={{ fontStyle: 'italic' }}> (filtered)</span>
+                     )}
+                   </div>
                   
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                     <button
