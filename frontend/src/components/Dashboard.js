@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { authAPI, fileAPI } from '../services/api';
 import { removeAuthTokens, getRefreshToken, setUser } from '../utils/auth';
 import FileUploadModal from './FileUploadModal';
+import FileDetailsModal from './FileDetailsModal';
 
 const Dashboard = ({ user, onLogout }) => {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -12,6 +13,8 @@ const Dashboard = ({ user, onLogout }) => {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(null);
+  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+  const [selectedFileId, setSelectedFileId] = useState(null);
 
   // File listing state
   const [files, setFiles] = useState([]);
@@ -29,6 +32,8 @@ const Dashboard = ({ user, onLogout }) => {
   const [sizeMax, setSizeMax] = useState(1073741824); // 1GB in bytes
   const [activeSizeMin, setActiveSizeMin] = useState(0);
   const [activeSizeMax, setActiveSizeMax] = useState(1073741824);
+
+
 
   // Fetch fresh user data on component mount
   useEffect(() => {
@@ -249,6 +254,16 @@ const Dashboard = ({ user, onLogout }) => {
 
   const hasActiveFilters = () => {
     return activeSearchTerm !== '' || activeSizeMin > 0 || activeSizeMax < 1073741824;
+  };
+
+  const handleFileClick = (fileId) => {
+    setSelectedFileId(fileId);
+    setIsDetailsModalOpen(true);
+  };
+
+  const handleCloseDetailsModal = () => {
+    setIsDetailsModalOpen(false);
+    setSelectedFileId(null);
   };
 
   const handleLogout = async () => {
@@ -1016,7 +1031,7 @@ const Dashboard = ({ user, onLogout }) => {
                   color: '#374151'
                 }}>
                   <div>Type</div>
-                  <div>Name</div>
+                  <div>Name (click for details)</div>
                   <div>Size</div>
                   <div>Tags</div>
                   <div>Uploaded</div>
@@ -1025,6 +1040,7 @@ const Dashboard = ({ user, onLogout }) => {
                 {files.map((file) => (
                   <div
                     key={file.id}
+                    onClick={() => handleFileClick(file.id)}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: '60px 1fr 120px 120px 180px',
@@ -1032,7 +1048,16 @@ const Dashboard = ({ user, onLogout }) => {
                       padding: '16px',
                       borderBottom: files.indexOf(file) < files.length - 1 ? '1px solid #f3f4f6' : 'none',
                       fontSize: '14px',
-                      alignItems: 'center'
+                      alignItems: 'center',
+                      cursor: 'pointer',
+                      transition: 'background-color 0.2s',
+                      borderRadius: '4px'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = '#f9fafb';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'transparent';
                     }}
                   >
                     <div style={{ fontSize: '24px' }}>
@@ -1189,6 +1214,13 @@ const Dashboard = ({ user, onLogout }) => {
         isOpen={isUploadModalOpen}
         onClose={() => setIsUploadModalOpen(false)}
         onUploadSuccess={handleUploadSuccess}
+      />
+
+      {/* File Details Modal */}
+      <FileDetailsModal
+        isOpen={isDetailsModalOpen}
+        onClose={handleCloseDetailsModal}
+        fileId={selectedFileId}
       />
     </div>
   );

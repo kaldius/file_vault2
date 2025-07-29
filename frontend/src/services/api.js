@@ -193,6 +193,7 @@ export const authAPI = {
 // File API (for future use)
 export const fileAPI = {
   getFiles: (params) => api.get('/api/files/', { params }),
+  getFileDetails: (fileId) => api.get(`/api/files/${fileId}/`),
   uploadFile: (formData) => api.post('/api/files/upload/', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }),
