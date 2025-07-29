@@ -25,6 +25,10 @@ const Dashboard = ({ user, onLogout }) => {
   const [hasPrevious, setHasPrevious] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeSearchTerm, setActiveSearchTerm] = useState('');
+  const [sizeMin, setSizeMin] = useState(0);
+  const [sizeMax, setSizeMax] = useState(1073741824); // 1GB in bytes
+  const [activeSizeMin, setActiveSizeMin] = useState(0);
+  const [activeSizeMax, setActiveSizeMax] = useState(1073741824);
 
   // Fetch fresh user data on component mount
   useEffect(() => {
@@ -32,17 +36,17 @@ const Dashboard = ({ user, onLogout }) => {
     fetchFiles();
   }, []);
 
-  // Refetch files when page, page size, or active search term changes
+  // Refetch files when page, page size, or active search/filter terms change
   useEffect(() => {
     fetchFiles();
-  }, [currentPage, pageSize, activeSearchTerm]);
+  }, [currentPage, pageSize, activeSearchTerm, activeSizeMin, activeSizeMax]);
 
-  // Reset to page 1 when active search term changes
+  // Reset to page 1 when active search term or size filters change
   useEffect(() => {
-    if (activeSearchTerm !== '') {
+    if (activeSearchTerm !== '' || activeSizeMin > 0 || activeSizeMax < 1073741824) {
       setCurrentPage(1);
     }
-  }, [activeSearchTerm]);
+  }, [activeSearchTerm, activeSizeMin, activeSizeMax]);
 
   // Clear upload success message after 5 seconds
   useEffect(() => {
@@ -110,7 +114,20 @@ const Dashboard = ({ user, onLogout }) => {
         params.filename = activeSearchTerm.trim();
       }
 
-      console.log(`Fetching files page ${currentPage} with size ${pageSize}${activeSearchTerm ? ` and search "${activeSearchTerm}"` : ''}...`);
+      // Add size filter parameters if active
+      if (activeSizeMin > 0) {
+        params.size_min = activeSizeMin;
+      }
+      if (activeSizeMax < 1073741824) { // 1GB in bytes
+        params.size_max = activeSizeMax;
+      }
+
+      const filterDescription = [];
+      if (activeSearchTerm) filterDescription.push(`search "${activeSearchTerm}"`);
+      if (activeSizeMin > 0) filterDescription.push(`min size ${formatBytesShort(activeSizeMin)}`);
+      if (activeSizeMax < 1073741824) filterDescription.push(`max size ${formatBytesShort(activeSizeMax)}`);
+      
+      console.log(`Fetching files page ${currentPage} with size ${pageSize}${filterDescription.length ? ` and filters: ${filterDescription.join(', ')}` : ''}...`);
       const response = await fileAPI.getFiles(params);
       
       const data = response.data;
@@ -182,6 +199,8 @@ const Dashboard = ({ user, onLogout }) => {
 
   const handleSearch = () => {
     setActiveSearchTerm(searchTerm.trim());
+    setActiveSizeMin(sizeMin);
+    setActiveSizeMax(sizeMax);
     setCurrentPage(1);
   };
 
@@ -195,7 +214,41 @@ const Dashboard = ({ user, onLogout }) => {
   const handleClearSearch = () => {
     setSearchTerm('');
     setActiveSearchTerm('');
+    setSizeMin(0);
+    setSizeMax(1073741824);
+    setActiveSizeMin(0);
+    setActiveSizeMax(1073741824);
     setCurrentPage(1);
+  };
+
+  const handleSizeMinChange = (e) => {
+    const value = parseInt(e.target.value);
+    setSizeMin(value);
+    // Ensure min doesn't exceed max
+    if (value > sizeMax) {
+      setSizeMax(value);
+    }
+  };
+
+  const handleSizeMaxChange = (e) => {
+    const value = parseInt(e.target.value);
+    setSizeMax(value);
+    // Ensure max doesn't go below min
+    if (value < sizeMin) {
+      setSizeMin(value);
+    }
+  };
+
+  const formatBytesShort = (bytes) => {
+    if (bytes === 0) return '0';
+    if (bytes < 1024) return `${bytes}B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))}MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+  };
+
+  const hasActiveFilters = () => {
+    return activeSearchTerm !== '' || activeSizeMin > 0 || activeSizeMax < 1073741824;
   };
 
   const handleLogout = async () => {
@@ -636,7 +689,7 @@ const Dashboard = ({ user, onLogout }) => {
             }}>
               Your Files
             </h2>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
               {/* Search Input */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '200px' }}>
                 <div style={{ position: 'relative', flex: 1 }}>
@@ -667,26 +720,26 @@ const Dashboard = ({ user, onLogout }) => {
                   }}>
                     <button
                       onClick={handleSearch}
-                      disabled={isLoadingFiles || !searchTerm.trim()}
+                      disabled={isLoadingFiles}
                       style={{
-                        background: (!searchTerm.trim() || isLoadingFiles) ? '#9ca3af' : '#667eea',
+                        background: isLoadingFiles ? '#9ca3af' : '#667eea',
                         border: 'none',
                         color: 'white',
-                        cursor: (!searchTerm.trim() || isLoadingFiles) ? 'not-allowed' : 'pointer',
+                        cursor: isLoadingFiles ? 'not-allowed' : 'pointer',
                         fontSize: '11px',
                         padding: '4px 8px',
                         borderRadius: '4px',
                         fontWeight: '500'
                       }}
-                      title="Search files"
+                      title="Apply filters"
                     >
                       {isLoadingFiles ? (
                         <div className="loading-spinner" style={{ width: '10px', height: '10px' }}></div>
                       ) : (
-                        'Search'
+                        'Filter'
                       )}
                     </button>
-                    {(searchTerm || activeSearchTerm) && (
+                    {(searchTerm || activeSearchTerm || sizeMin > 0 || sizeMax < 1073741824) && (
                       <button
                         onClick={handleClearSearch}
                         disabled={isLoadingFiles}
@@ -699,12 +752,84 @@ const Dashboard = ({ user, onLogout }) => {
                           padding: '2px',
                           borderRadius: '2px'
                         }}
-                        title="Clear search"
+                        title="Clear all filters"
                       >
                         ×
                       </button>
                     )}
                   </div>
+                </div>
+              </div>
+
+              {/* Size Filter Sliders */}
+              <div style={{ 
+                display: 'flex', 
+                flexDirection: 'column', 
+                gap: '8px', 
+                minWidth: '200px',
+                padding: '8px 12px',
+                border: '1px solid #e5e7eb',
+                borderRadius: '8px',
+                backgroundColor: '#f9fafb'
+              }}>
+                <div style={{ fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
+                  File Size Filter
+                </div>
+                
+                {/* Min Size Slider */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label style={{ fontSize: '11px', color: '#6b7280' }}>Min:</label>
+                    <span style={{ fontSize: '11px', color: '#374151', fontWeight: '500' }}>
+                      {formatBytesShort(sizeMin)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1073741824"
+                    step="1048576"
+                    value={sizeMin}
+                    onChange={handleSizeMinChange}
+                    disabled={isLoadingFiles}
+                    style={{
+                      width: '100%',
+                      height: '4px',
+                      borderRadius: '2px',
+                      background: `linear-gradient(to right, #667eea 0%, #667eea ${(sizeMin / 1073741824) * 100}%, #e5e7eb ${(sizeMin / 1073741824) * 100}%, #e5e7eb 100%)`,
+                      outline: 'none',
+                      WebkitAppearance: 'none',
+                      cursor: isLoadingFiles ? 'not-allowed' : 'pointer'
+                    }}
+                  />
+                </div>
+
+                {/* Max Size Slider */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label style={{ fontSize: '11px', color: '#6b7280' }}>Max:</label>
+                    <span style={{ fontSize: '11px', color: '#374151', fontWeight: '500' }}>
+                      {formatBytesShort(sizeMax)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1073741824"
+                    step="1048576"
+                    value={sizeMax}
+                    onChange={handleSizeMaxChange}
+                    disabled={isLoadingFiles}
+                    style={{
+                      width: '100%',
+                      height: '4px',
+                      borderRadius: '2px',
+                      background: `linear-gradient(to right, #667eea 0%, #667eea ${(sizeMax / 1073741824) * 100}%, #e5e7eb ${(sizeMax / 1073741824) * 100}%, #e5e7eb 100%)`,
+                      outline: 'none',
+                      WebkitAppearance: 'none',
+                      cursor: isLoadingFiles ? 'not-allowed' : 'pointer'
+                    }}
+                  />
                 </div>
               </div>
 
@@ -791,8 +916,8 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
           )}
 
-                     {/* Search Results Info */}
-          {activeSearchTerm && !isLoadingFiles && (
+                     {/* Search/Filter Results Info */}
+          {hasActiveFilters() && !isLoadingFiles && (
             <div style={{
               background: '#f0f9ff',
               border: '1px solid #bae6fd',
@@ -804,7 +929,10 @@ const Dashboard = ({ user, onLogout }) => {
             }}>
               {files.length > 0 ? (
                 <>
-                  Found <strong>{totalFiles}</strong> file{totalFiles !== 1 ? 's' : ''} matching "<strong>{activeSearchTerm}</strong>"
+                  Found <strong>{totalFiles}</strong> file{totalFiles !== 1 ? 's' : ''} with filters:
+                  {activeSearchTerm && <span> filename "<strong>{activeSearchTerm}</strong>"</span>}
+                  {activeSizeMin > 0 && <span> min size <strong>{formatBytesShort(activeSizeMin)}</strong></span>}
+                  {activeSizeMax < 1073741824 && <span> max size <strong>{formatBytesShort(activeSizeMax)}</strong></span>}
                   <button
                     onClick={handleClearSearch}
                     style={{
@@ -818,12 +946,12 @@ const Dashboard = ({ user, onLogout }) => {
                       cursor: 'pointer'
                     }}
                   >
-                    Clear search
+                    Clear filters
                   </button>
                 </>
               ) : (
                 <>
-                  No files found matching "<strong>{activeSearchTerm}</strong>"
+                  No files found with current filters
                   <button
                     onClick={handleClearSearch}
                     style={{
@@ -837,7 +965,7 @@ const Dashboard = ({ user, onLogout }) => {
                       cursor: 'pointer'
                     }}
                   >
-                    Clear search
+                    Clear filters
                   </button>
                 </>
               )}
@@ -849,20 +977,20 @@ const Dashboard = ({ user, onLogout }) => {
             <div style={{ textAlign: 'center', padding: '40px' }}>
               <div className="loading-spinner" style={{ margin: '0 auto 16px' }}></div>
               <p style={{ color: '#6b7280', fontSize: '14px' }}>
-                {activeSearchTerm ? `Searching for "${activeSearchTerm}"...` : 'Loading your files...'}
+                {hasActiveFilters() ? 'Applying filters...' : 'Loading your files...'}
               </p>
             </div>
           ) : files.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px' }}>
               <div style={{ fontSize: '48px', marginBottom: '16px' }}>
-                {activeSearchTerm ? '🔍' : '📁'}
+                {hasActiveFilters() ? '🔍' : '📁'}
               </div>
               <h3 style={{ color: '#374151', marginBottom: '8px' }}>
-                {activeSearchTerm ? 'No files found' : 'No files yet'}
+                {hasActiveFilters() ? 'No files found' : 'No files yet'}
               </h3>
               <p style={{ color: '#6b7280', fontSize: '14px' }}>
-                {activeSearchTerm 
-                  ? `No files match "${activeSearchTerm}". Try a different search term.`
+                {hasActiveFilters() 
+                  ? 'No files match your current filters. Try adjusting your search criteria.'
                   : 'Upload your first file to get started!'
                 }
               </p>
@@ -967,7 +1095,7 @@ const Dashboard = ({ user, onLogout }) => {
                 }}>
                                      <div style={{ fontSize: '14px', color: '#6b7280' }}>
                      Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalFiles)} of {totalFiles} files
-                     {activeSearchTerm && (
+                     {hasActiveFilters() && (
                        <span style={{ fontStyle: 'italic' }}> (filtered)</span>
                      )}
                    </div>
