@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { authAPI } from '../services/api';
+import { authAPI, fileAPI } from '../services/api';
 import { removeAuthTokens, getRefreshToken, setUser } from '../utils/auth';
 import FileUploadModal from './FileUploadModal';
 
@@ -13,10 +13,27 @@ const Dashboard = ({ user, onLogout }) => {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(null);
 
+  // File listing state
+  const [files, setFiles] = useState([]);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  const [filesError, setFilesError] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalFiles, setTotalFiles] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [hasNext, setHasNext] = useState(false);
+  const [hasPrevious, setHasPrevious] = useState(false);
+
   // Fetch fresh user data on component mount
   useEffect(() => {
     fetchUserData();
+    fetchFiles();
   }, []);
+
+  // Refetch files when page or page size changes
+  useEffect(() => {
+    fetchFiles();
+  }, [currentPage, pageSize]);
 
   // Clear upload success message after 5 seconds
   useEffect(() => {
@@ -66,8 +83,52 @@ const Dashboard = ({ user, onLogout }) => {
     }
   };
 
+  const fetchFiles = async (showLoading = true) => {
+    if (showLoading) {
+      setIsLoadingFiles(true);
+    }
+    setFilesError('');
+
+    try {
+      console.log(`Fetching files page ${currentPage} with size ${pageSize}...`);
+      const response = await fileAPI.getFiles({
+        page: currentPage,
+        page_size: pageSize,
+        ordering: '-uploaded_at' // Show newest first
+      });
+      
+      const data = response.data;
+      console.log('Files received:', data);
+      
+      setFiles(data.results || []);
+      setTotalFiles(data.count || 0);
+      setTotalPages(Math.ceil((data.count || 0) / pageSize));
+      setHasNext(!!data.next);
+      setHasPrevious(!!data.previous);
+      
+    } catch (error) {
+      console.error('Failed to fetch files:', error);
+      
+      if (error.response?.status === 401) {
+        setFilesError('Session expired. Please log in again.');
+      } else if (error.type === 'network_error') {
+        setFilesError('Network error. Could not load files.');
+      } else {
+        setFilesError('Failed to load files. Please try again.');
+      }
+    } finally {
+      if (showLoading) {
+        setIsLoadingFiles(false);
+      }
+    }
+  };
+
   const handleRefreshUserData = () => {
     fetchUserData(true);
+  };
+
+  const handleRefreshFiles = () => {
+    fetchFiles(true);
   };
 
   const handleUploadSuccess = (uploadedFile) => {
@@ -82,6 +143,21 @@ const Dashboard = ({ user, onLogout }) => {
     
     // Refresh user data to get updated storage usage
     fetchUserData(false);
+    
+    // Refresh files list and go to first page to see new file
+    setCurrentPage(1);
+    fetchFiles(false);
+  };
+
+  const handlePageChange = (newPage) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
+    }
+  };
+
+  const handlePageSizeChange = (newPageSize) => {
+    setPageSize(newPageSize);
+    setCurrentPage(1); // Reset to first page when changing page size
   };
 
   const handleLogout = async () => {
@@ -156,7 +232,7 @@ const Dashboard = ({ user, onLogout }) => {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
-      month: 'long',
+      month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
@@ -166,6 +242,22 @@ const Dashboard = ({ user, onLogout }) => {
   const getStoragePercentage = () => {
     if (!currentUser?.storage_quota || currentUser.storage_quota === 0) return 0;
     return Math.round((currentUser.storage_used / currentUser.storage_quota) * 100);
+  };
+
+  const getMimeTypeIcon = (mimeType) => {
+    if (!mimeType) return '📄';
+    
+    if (mimeType.startsWith('image/')) return '🖼️';
+    if (mimeType.startsWith('video/')) return '🎥';
+    if (mimeType.startsWith('audio/')) return '🎵';
+    if (mimeType.includes('pdf')) return '📕';
+    if (mimeType.includes('word') || mimeType.includes('document')) return '📝';
+    if (mimeType.includes('sheet') || mimeType.includes('excel')) return '📊';
+    if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return '📽️';
+    if (mimeType.includes('zip') || mimeType.includes('archive')) return '📦';
+    if (mimeType.includes('text/')) return '📄';
+    
+    return '📄';
   };
 
   const displayUser = currentUser || user;
@@ -293,7 +385,8 @@ const Dashboard = ({ user, onLogout }) => {
           borderRadius: '12px', 
           padding: '32px', 
           textAlign: 'center',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+          marginBottom: '32px'
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <h1 style={{ 
@@ -487,6 +580,305 @@ const Dashboard = ({ user, onLogout }) => {
               🎉 File upload is now available! Click the "Upload File" button above to get started.
             </p>
           </div>
+        </div>
+
+        {/* Files List Section */}
+        <div style={{ 
+          background: 'white', 
+          borderRadius: '12px', 
+          padding: '32px', 
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+            <h2 style={{ 
+              fontSize: '24px', 
+              fontWeight: '700', 
+              color: '#1f2937', 
+              margin: 0
+            }}>
+              Your Files
+            </h2>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              {/* Page Size Selector */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '14px', color: '#6b7280' }}>Show:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                  disabled={isLoadingFiles}
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '4px',
+                    fontSize: '14px',
+                    backgroundColor: isLoadingFiles ? '#f3f4f6' : 'white'
+                  }}
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+                <span style={{ fontSize: '14px', color: '#6b7280' }}>per page</span>
+              </div>
+              
+              <button 
+                onClick={handleRefreshFiles}
+                disabled={isLoadingFiles}
+                style={{
+                  padding: '6px 12px',
+                  background: isLoadingFiles ? '#9ca3af' : '#667eea',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  cursor: isLoadingFiles ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                {isLoadingFiles ? (
+                  <>
+                    <div className="loading-spinner" style={{ width: '12px', height: '12px' }}></div>
+                    Loading...
+                  </>
+                ) : (
+                  '🔄 Refresh'
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Files Error */}
+          {filesError && (
+            <div style={{
+              background: '#fef2f2',
+              border: '1px solid #fecaca',
+              borderRadius: '8px',
+              padding: '12px',
+              marginBottom: '20px',
+              color: '#dc2626',
+              fontSize: '14px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <span>{filesError}</span>
+              <button 
+                onClick={handleRefreshFiles}
+                style={{
+                  padding: '4px 8px',
+                  background: '#dc2626',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  cursor: 'pointer'
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {/* Files List */}
+          {isLoadingFiles ? (
+            <div style={{ textAlign: 'center', padding: '40px' }}>
+              <div className="loading-spinner" style={{ margin: '0 auto 16px' }}></div>
+              <p style={{ color: '#6b7280', fontSize: '14px' }}>Loading your files...</p>
+            </div>
+          ) : files.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px' }}>
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>📁</div>
+              <h3 style={{ color: '#374151', marginBottom: '8px' }}>No files yet</h3>
+              <p style={{ color: '#6b7280', fontSize: '14px' }}>
+                Upload your first file to get started!
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Files Table */}
+              <div style={{ 
+                border: '1px solid #e5e7eb', 
+                borderRadius: '8px', 
+                overflow: 'hidden',
+                marginBottom: '24px'
+              }}>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '60px 1fr 120px 120px 180px',
+                  gap: '16px',
+                  padding: '16px',
+                  backgroundColor: '#f9fafb',
+                  borderBottom: '1px solid #e5e7eb',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: '#374151'
+                }}>
+                  <div>Type</div>
+                  <div>Name</div>
+                  <div>Size</div>
+                  <div>Tags</div>
+                  <div>Uploaded</div>
+                </div>
+                
+                {files.map((file) => (
+                  <div
+                    key={file.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '60px 1fr 120px 120px 180px',
+                      gap: '16px',
+                      padding: '16px',
+                      borderBottom: files.indexOf(file) < files.length - 1 ? '1px solid #f3f4f6' : 'none',
+                      fontSize: '14px',
+                      alignItems: 'center'
+                    }}
+                  >
+                    <div style={{ fontSize: '24px' }}>
+                      {getMimeTypeIcon(file.mime_type)}
+                    </div>
+                    <div style={{ 
+                      fontWeight: '500', 
+                      color: '#374151',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      {file.original_filename}
+                    </div>
+                    <div style={{ color: '#6b7280' }}>
+                      {formatBytes(file.size)}
+                    </div>
+                    <div style={{ color: '#6b7280' }}>
+                      {file.tags && file.tags.length > 0 ? (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {file.tags.slice(0, 2).map((tag, index) => (
+                            <span
+                              key={index}
+                              style={{
+                                padding: '2px 6px',
+                                backgroundColor: '#e0e7ff',
+                                color: '#3730a3',
+                                borderRadius: '12px',
+                                fontSize: '11px',
+                                fontWeight: '500'
+                              }}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                          {file.tags.length > 2 && (
+                            <span style={{ fontSize: '11px', color: '#9ca3af' }}>
+                              +{file.tags.length - 2}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ color: '#d1d5db' }}>—</span>
+                      )}
+                    </div>
+                    <div style={{ color: '#6b7280' }}>
+                      {formatDate(file.uploaded_at)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '16px 0'
+                }}>
+                  <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                    Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalFiles)} of {totalFiles} files
+                  </div>
+                  
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handlePageChange(currentPage - 1);
+                      }}
+                      disabled={!hasPrevious || isLoadingFiles}
+                      style={{
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        background: (!hasPrevious || isLoadingFiles) ? '#f9fafb' : 'white',
+                        color: (!hasPrevious || isLoadingFiles) ? '#9ca3af' : '#374151',
+                        fontSize: '14px',
+                        cursor: (!hasPrevious || isLoadingFiles) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      ← Previous
+                    </button>
+                    
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                        let pageNum;
+                        if (totalPages <= 5) {
+                          pageNum = i + 1;
+                        } else if (currentPage <= 3) {
+                          pageNum = i + 1;
+                        } else if (currentPage >= totalPages - 2) {
+                          pageNum = totalPages - 4 + i;
+                        } else {
+                          pageNum = currentPage - 2 + i;
+                        }
+                        
+                        return (
+                          <button
+                            key={pageNum}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handlePageChange(pageNum);
+                            }}
+                            disabled={isLoadingFiles}
+                            style={{
+                              padding: '8px 12px',
+                              border: '1px solid #d1d5db',
+                              borderRadius: '6px',
+                              background: pageNum === currentPage ? '#667eea' : 'white',
+                              color: pageNum === currentPage ? 'white' : '#374151',
+                              fontSize: '14px',
+                              cursor: isLoadingFiles ? 'not-allowed' : 'pointer',
+                              minWidth: '40px'
+                            }}
+                          >
+                            {pageNum}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handlePageChange(currentPage + 1);
+                      }}
+                      disabled={!hasNext || isLoadingFiles}
+                      style={{
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        background: (!hasNext || isLoadingFiles) ? '#f9fafb' : 'white',
+                        color: (!hasNext || isLoadingFiles) ? '#9ca3af' : '#374151',
+                        fontSize: '14px',
+                        cursor: (!hasNext || isLoadingFiles) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      Next →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
 
