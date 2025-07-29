@@ -294,21 +294,6 @@ When a user uploads the same file (same content hash and filename) again after d
 - Restores the file size to user's storage usage
 - Returns the same `UserFile` ID as before deletion
 
-#### GET `/api/files/stats/`
-**Purpose**: Get user's file storage statistics
-**Authentication**: Required
-**Status**: ✅ Implemented and working
-**Response (200)**:
-```json
-{
-    "total_files": 50,
-    "total_size": 104857600,
-    "storage_used": 104857600,
-    "storage_quota": 1073741824,
-    "storage_percentage": 9.77
-}
-```
-
 ## Key Implementation Details
 
 ### File Deduplication

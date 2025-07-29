@@ -436,87 +436,10 @@ class FileListAPITests(APITestCase):
         self.assertIsInstance(file_data['size'], int)
         self.assertIsInstance(file_data['file_hash'], str)
 
-    def test_file_stats_endpoint(self):
-        """Test file statistics endpoint returns correct data"""
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token1}')
-        
-        stats_url = reverse('file_stats')
-        response = self.client.get(stats_url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
-        # Verify response structure
-        expected_fields = ['total_files', 'total_size', 'storage_used', 'storage_quota', 'storage_percentage']
-        for field in expected_fields:
-            self.assertIn(field, response.data)
-        
-        # Verify data types
-        self.assertIsInstance(response.data['total_files'], int)
-        self.assertIsInstance(response.data['total_size'], int)
-        self.assertIsInstance(response.data['storage_used'], int)
-        self.assertIsInstance(response.data['storage_quota'], int)
-        self.assertIsInstance(response.data['storage_percentage'], float)
-        
-        # Verify values make sense (we have 3 uploaded files)
-        self.assertEqual(response.data['total_files'], 3)
-        self.assertGreater(response.data['total_size'], 0)
-        self.assertGreaterEqual(response.data['storage_percentage'], 0)
-        self.assertLessEqual(response.data['storage_percentage'], 100)
-        
-        # storage_used should equal total_size for this user
-        self.assertEqual(response.data['storage_used'], response.data['total_size'])
 
-    def test_file_stats_empty_account(self):
-        """Test file stats for user with no files"""
-        # Create new user with no files
-        user3 = User.objects.create_user(
-            username='testuser3',
-            email='test3@example.com',
-            password='testpass123'
-        )
-        refresh3 = RefreshToken.for_user(user3)
-        access_token3 = str(refresh3.access_token)
-        
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token3}')
-        
-        stats_url = reverse('file_stats')
-        response = self.client.get(stats_url)
-        
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['total_files'], 0)
-        self.assertEqual(response.data['total_size'], 0)
-        self.assertEqual(response.data['storage_percentage'], 0.0)
 
-    def test_file_stats_excludes_deleted_files(self):
-        """Test that file stats exclude soft-deleted files"""
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token1}')
-        
-        # Get initial stats
-        stats_url = reverse('file_stats')
-        initial_response = self.client.get(stats_url)
-        initial_files = initial_response.data['total_files']
-        initial_size = initial_response.data['total_size']
-        
-        # Soft delete a file
-        user_file = UserFile.objects.filter(user=self.user1).first()
-        deleted_size = user_file.file.size
-        user_file.deleted = True
-        user_file.save()
-        
-        # Stats should reflect the deletion
-        response = self.client.get(stats_url)
-        
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['total_files'], initial_files - 1)
-        self.assertEqual(response.data['total_size'], initial_size - deleted_size)
 
-    def test_file_stats_unauthenticated(self):
-        """Test file stats endpoint requires authentication"""
-        fresh_client = APIClient()
-        
-        stats_url = reverse('file_stats')
-        response = fresh_client.get(stats_url)
-        
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
 
     def test_file_detail_endpoint(self):
         """Test file detail endpoint returns correct file information"""

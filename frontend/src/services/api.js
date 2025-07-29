@@ -201,7 +201,7 @@ export const fileAPI = {
     responseType: 'blob',
   }),
   deleteFile: (fileId) => api.delete(`/api/files/${fileId}/delete/`),
-  getFileStats: () => api.get('/api/files/stats/'),
+
 };
 
 // Utility function to check if user is authenticated

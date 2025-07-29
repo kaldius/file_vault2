@@ -269,17 +269,6 @@ class FileListSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'uploaded_at', 'size', 'mime_type', 'file_hash')
 
 
-class FileStatsSerializer(serializers.Serializer):
-    """
-    Serializer for user file storage statistics
-    """
-    total_files = serializers.IntegerField()
-    total_size = serializers.IntegerField()
-    storage_used = serializers.IntegerField()
-    storage_quota = serializers.IntegerField()
-    storage_percentage = serializers.FloatField()
-
-
 class UserProfileSerializer(serializers.ModelSerializer):
     """
     Serializer for user profile information (/api/users/me/)
